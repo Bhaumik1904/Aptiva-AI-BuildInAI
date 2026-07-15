@@ -31,6 +31,19 @@ resume_agent:
   temperature: 0.1               # Near-zero for deterministic extraction
   max_output_tokens: 2048        # Sufficient for full resume extraction
 
+# ── Candidate Intelligence Engine (Sprint 5B) ────────────────────────────────
+# Same 3-tier model resolution as jd_agent and resume_agent:
+#   1. matching_agent.model ← change this to switch models
+#   2. gemini_model (below) ← global fallback
+#   3. Hard-coded: gemini-2.5-flash
+# Temperature is slightly higher (0.2) than extraction agents to allow
+# creative, candidate-specific interview questions.
+matching_agent:
+  enabled: true
+  model: "gemini-2.5-flash"      # Configurable — change to gemini-2.5-pro if needed
+  temperature: 0.2               # Slightly higher — allows creative interview questions
+  max_output_tokens: 3072        # Larger — 9-section InsightsPayload is verbose
+
 # ── Gemini Settings (only used when enable_reasoning_enrichment: true) ───────
 gemini_model: "gemini-2.5-pro"
 gemini_api_key: ""                   # Or set GEMINI_API_KEY env var

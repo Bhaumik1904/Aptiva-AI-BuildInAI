@@ -5,6 +5,7 @@ Full profile card, career timeline, skill list, education, and all signals.
 
 import streamlit as st
 
+from agents.matching_agent import CandidateIntelligenceAgent
 from core.reasoning import generate_ai_insights, generate_reasoning
 from core.skill_gap import analyze_skill_gap
 from ui.charts import behavioral_radar, skill_match_chart
@@ -73,8 +74,9 @@ def render(state: dict):
     st.markdown("<br>", unsafe_allow_html=True)
 
     # -- Tabs --------------------------------------------------------------
-    tab_overview, tab_career, tab_skills, tab_signals, tab_reasoning = st.tabs([
-        "Overview", "Career History", "Skills & Gap", "Behavioral Signals", "AI Reasoning"
+    tab_overview, tab_career, tab_skills, tab_signals, tab_reasoning, tab_ai = st.tabs([
+        "Overview", "Career History", "Skills & Gap",
+        "Behavioral Signals", "AI Reasoning", "\u2728 AI Insights"
     ])
 
     # -- TAB 1: Overview ---------------------------------------------------
@@ -219,6 +221,352 @@ def render(state: dict):
         if st.button("Open in Judge Mode", use_container_width=False, icon=":material/gavel:"):
             state["page"] = "judge_mode"
             st.rerun()
+
+    # -- TAB 6: ✨ AI Insights -----------------------------------------------
+    with tab_ai:
+        _render_ai_insights_tab(candidate, components, state)
+
+
+# -- AI Insights Tab Logic -------------------------------------------------------
+
+_REC_CONFIG = {
+    "Strong Hire":      ("#EBF5EA", "#1A8917", "1px solid #A8D5A2", "\U0001f7e2"),
+    "Hire":             ("#F0F7FF", "#0071E3", "1px solid #C8DEFF", "\U0001f535"),
+    "Consider":         ("#FFF8E6", "#C47000", "1px solid #F5DDA0", "\U0001f7e1"),
+    "Not Recommended":  ("#FFF5F5", "#CC0000", "1px solid #F5C0C0", "\U0001f534"),
+}
+
+_CONF_CONFIG = {
+    "High":   ("#EBF5EA", "#1A8917", "High Confidence"),
+    "Medium": ("#FFF8E6", "#C47000", "Medium Confidence"),
+    "Low":    ("#FFF5F5", "#CC0000", "Low Confidence"),
+}
+
+_SEV_CONFIG = {
+    "Critical": ("#FFF5F5", "#CC0000", "#F5C0C0"),
+    "Important":("#FFF8E6", "#C47000", "#F5DDA0"),
+    "Optional": ("#F5F5F7", "#6E6E73", "#E8E8ED"),
+}
+
+
+def _render_ai_insights_tab(
+    candidate: dict,
+    score_components: dict,
+    state: dict,
+) -> None:
+    """
+    Renders the \u2728 AI Insights tab.
+
+    On first open: calls CandidateIntelligenceAgent and caches the result
+    in st.session_state under a per-candidate key so Gemini is not re-called
+    on every Streamlit rerun.
+    """
+    cid      = candidate.get("candidate_id", "unknown")
+    cache_key= f"ai_insights_{cid}"
+    cfg      = state.get("app_config", {})
+    agent    = CandidateIntelligenceAgent(cfg)
+
+    # Retrieve the active project's JD
+    active_project = state.get("active_project")
+    if active_project is None:
+        st.warning("No active Hiring Project. Set one in the Hiring Projects page.")
+        return
+    jd = active_project.job_description
+
+    # ── API key guard ────────────────────────────────────────────────────────
+    if not agent.is_configured():
+        st.warning(
+            "**Gemini API key not configured.** "
+            "Set `gemini_api_key` in `config.yaml` or export `GEMINI_API_KEY`.",
+            icon="\u26a0\ufe0f",
+        )
+        return
+
+    # ── Load or generate ─────────────────────────────────────────────────────
+    if cache_key not in st.session_state:
+        progress_steps = [
+            "Analyzing candidate profile\u2026",
+            "Comparing skills against Job Description\u2026",
+            "Measuring experience against requirements\u2026",
+            "Identifying skill gaps\u2026",
+            "Building hiring recommendation\u2026",
+            "Generating tailored interview questions\u2026",
+            "Assessing hiring confidence\u2026",
+        ]
+
+        status_slot = st.empty()
+
+        for step in progress_steps:
+            status_slot.markdown(
+                f'<div style="background:#F0F7FF;border:1px solid #C8DEFF;'
+                f'border-radius:8px;padding:0.875rem 1.25rem;'
+                f'font-size:0.8125rem;color:#0071E3;">'
+                f'\u23f3 {step}</div>',
+                unsafe_allow_html=True,
+            )
+
+        with st.spinner("Generating AI insights\u2026"):
+            try:
+                payload = agent.analyze(jd, candidate, score_components)
+                st.session_state[cache_key] = {"ok": True, "payload": payload}
+            except (ValueError, RuntimeError, Exception) as exc:  # noqa: BLE001
+                st.session_state[cache_key] = {"ok": False, "error": str(exc)}
+
+        status_slot.empty()
+
+    result = st.session_state[cache_key]
+
+    if not result.get("ok"):
+        st.error(
+            f"\u26a0\ufe0f AI analysis failed: {result.get('error', 'Unknown error')}\n\n"
+            "Please check your API key and try again. "
+            "You can clear the cache by switching to another candidate and back.",
+        )
+        if st.button("\U0001f504 Retry Analysis", key=f"retry_{cid}"):
+            st.session_state.pop(cache_key, None)
+            st.rerun()
+        return
+
+    payload = result["payload"]
+    _render_ai_insights_panel(payload, candidate)
+
+
+def _render_ai_insights_panel(payload: dict, candidate: dict) -> None:
+    """Render the full 9-section AI Insights panel."""
+
+    rec  = payload.get("hiring_recommendation", "Consider")
+    pct  = payload.get("overall_match_pct", 0)
+    rec_bg, rec_clr, rec_border, rec_dot = _REC_CONFIG.get(
+        rec, ("#F5F5F7", "#6E6E73", "1px solid #E8E8ED", "\u26aa")
+    )
+
+    name = candidate.get("profile", {}).get("anonymized_name", "Candidate")
+
+    # ── Section 1: Hero bar ──────────────────────────────────────────────────
+    st.markdown(
+        f'<div style="background:{rec_bg};border:{rec_border};border-radius:12px;'
+        f'padding:1.25rem 1.5rem;margin-bottom:1.25rem;'
+        f'display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:1rem">'
+        f'<div>'
+        f'<div style="font-size:0.6875rem;font-weight:700;color:{rec_clr};'
+        f'text-transform:uppercase;letter-spacing:0.08em;margin-bottom:0.25rem">Overall Match</div>'
+        f'<div style="font-size:2.5rem;font-weight:800;color:{rec_clr};'
+        f'letter-spacing:-0.04em;line-height:1">{pct}%</div>'
+        f'<div style="font-size:0.8125rem;color:#6E6E73;margin-top:0.25rem">{name}</div>'
+        f'</div>'
+        f'<div style="text-align:right">'
+        f'<div style="font-size:0.6875rem;font-weight:700;color:{rec_clr};'
+        f'text-transform:uppercase;letter-spacing:0.08em;margin-bottom:0.35rem">Recommendation</div>'
+        f'<div style="font-size:1.375rem;font-weight:700;color:{rec_clr}">{rec_dot} {rec}</div>'
+        f'</div>'
+        f'</div>',
+        unsafe_allow_html=True,
+    )
+
+    # Match summary
+    summary = payload.get("match_summary", "")
+    if summary:
+        st.markdown(
+            f'<div style="background:#F5F5F7;border-radius:10px;padding:1rem 1.25rem;'
+            f'font-size:0.9375rem;color:#1D1D1F;line-height:1.65;margin-bottom:1rem">'
+            f'{summary}</div>',
+            unsafe_allow_html=True,
+        )
+
+    # ── Sections 2 & 3: Strengths + Skill Gaps side by side ─────────────────
+    col_str, col_gap = st.columns(2, gap="large")
+
+    with col_str:
+        section_label("STRENGTHS")
+        strengths = payload.get("strengths", [])
+        if strengths:
+            items_html = "".join(
+                f'<div style="display:flex;align-items:flex-start;gap:0.5rem;'
+                f'margin:0.3rem 0;font-size:0.875rem;color:#1D1D1F">'
+                f'<span style="color:#1A8917;font-weight:700;flex-shrink:0">\u2713</span>'
+                f'<span>{s}</span></div>'
+                for s in strengths
+            )
+            st.markdown(
+                f'<div style="background:#EBF5EA;border:1px solid #C3EAC3;border-radius:8px;'
+                f'padding:1rem 1.125rem">{items_html}</div>',
+                unsafe_allow_html=True,
+            )
+
+    with col_gap:
+        section_label("SKILL GAPS")
+        skill_gaps = payload.get("skill_gaps", [])
+        if skill_gaps:
+            for sg in skill_gaps:
+                sev  = sg.get("severity", "Important")
+                skl  = sg.get("skill", "")
+                evid = sg.get("evidence", "")
+                bg, clr, brd = _SEV_CONFIG.get(sev, ("#F5F5F7", "#6E6E73", "#E8E8ED"))
+                st.markdown(
+                    f'<div style="background:{bg};border:1px solid {brd};'
+                    f'border-radius:6px;padding:0.5rem 0.75rem;margin:0.25rem 0">'
+                    f'<div style="display:flex;align-items:center;gap:0.5rem;margin-bottom:0.15rem">'
+                    f'<span style="font-size:0.6875rem;font-weight:700;color:{clr};'
+                    f'text-transform:uppercase;letter-spacing:0.06em;background:white;'
+                    f'padding:0.1rem 0.35rem;border-radius:3px">{sev}</span>'
+                    f'<span style="font-size:0.875rem;font-weight:600;color:#1D1D1F">{skl}</span>'
+                    f'</div>'
+                    f'<div style="font-size:0.8rem;color:#6E6E73">{evid}</div>'
+                    f'</div>',
+                    unsafe_allow_html=True,
+                )
+        else:
+            st.markdown(
+                '<div style="color:#1A8917;font-size:0.875rem">'
+                '\u2713 All core skills matched. No critical gaps identified.</div>',
+                unsafe_allow_html=True,
+            )
+
+    st.markdown("<br>", unsafe_allow_html=True)
+
+    # ── Sections 4 & 5: Experience + Education analysis side by side ─────────
+    col_exp, col_edu = st.columns(2, gap="large")
+
+    with col_exp:
+        section_label("EXPERIENCE ANALYSIS")
+        exp = payload.get("experience_analysis", {})
+        ev  = exp.get("verdict", "Meets Expectation")
+        er  = exp.get("reasoning", "")
+        exp_clr = {"Below Expectation": "#CC0000", "Meets Expectation": "#0071E3",
+                   "Exceeds Expectation": "#1A8917"}.get(ev, "#6E6E73")
+        st.markdown(
+            f'<div style="background:#F5F5F7;border-radius:8px;padding:0.875rem 1rem">'
+            f'<div style="font-weight:700;color:{exp_clr};font-size:0.9375rem;'
+            f'margin-bottom:0.4rem">{ev}</div>'
+            f'<div style="font-size:0.8125rem;color:#6E6E73;line-height:1.55">{er}</div>'
+            f'</div>',
+            unsafe_allow_html=True,
+        )
+
+    with col_edu:
+        section_label("EDUCATION ANALYSIS")
+        edu = payload.get("education_analysis", {})
+        edv = edu.get("verdict", "Not Specified")
+        edr = edu.get("reasoning", "")
+        edu_clr = {"Aligned": "#1A8917", "Partially Aligned": "#C47000",
+                   "Not Aligned": "#CC0000", "Not Specified": "#86868B"}.get(edv, "#86868B")
+        st.markdown(
+            f'<div style="background:#F5F5F7;border-radius:8px;padding:0.875rem 1rem">'
+            f'<div style="font-weight:700;color:{edu_clr};font-size:0.9375rem;'
+            f'margin-bottom:0.4rem">{edv}</div>'
+            f'<div style="font-size:0.8125rem;color:#6E6E73;line-height:1.55">{edr}</div>'
+            f'</div>',
+            unsafe_allow_html=True,
+        )
+
+    st.markdown("<br>", unsafe_allow_html=True)
+
+    # ── Section 6: Hiring Recommendation ─────────────────────────────────────
+    section_label("HIRING RECOMMENDATION")
+    rec_reason = payload.get("recommendation_reason", "")
+    st.markdown(
+        f'<div style="background:{rec_bg};border:{rec_border};border-radius:10px;'
+        f'padding:1rem 1.25rem">'
+        f'<div style="font-size:1rem;font-weight:700;color:{rec_clr};margin-bottom:0.4rem">'
+        f'{rec_dot} {rec}</div>'
+        f'<div style="font-size:0.875rem;color:#1D1D1F;line-height:1.6">{rec_reason}</div>'
+        f'</div>',
+        unsafe_allow_html=True,
+    )
+
+    st.markdown("<br>", unsafe_allow_html=True)
+
+    # ── Section 9: Hiring Confidence (approved addition) ─────────────────────
+    section_label("HIRING CONFIDENCE")
+    conf      = payload.get("hiring_confidence", {})
+    conf_lvl  = conf.get("level", "Medium")
+    conf_reas = conf.get("reasoning", "")
+    conf_bg, conf_clr, conf_label = _CONF_CONFIG.get(
+        conf_lvl, ("#F5F5F7", "#6E6E73", "Medium Confidence")
+    )
+    conf_icons = {"High": "\U0001f7e2 \U0001f7e2 \U0001f7e2",
+                  "Medium": "\U0001f7e1 \U0001f7e1 \u26aa",
+                  "Low": "\U0001f534 \u26aa \u26aa"}
+    st.markdown(
+        f'<div style="background:{conf_bg};border:1px solid {conf_clr}33;'
+        f'border-radius:10px;padding:1rem 1.25rem;'
+        f'display:flex;align-items:flex-start;gap:1rem">'
+        f'<div style="flex-shrink:0">'
+        f'<div style="font-size:1.375rem">{conf_icons.get(conf_lvl, "")}</div>'
+        f'</div>'
+        f'<div>'
+        f'<div style="font-weight:700;color:{conf_clr};font-size:0.9375rem;margin-bottom:0.3rem">'
+        f'{conf_label}</div>'
+        f'<div style="font-size:0.8125rem;color:#1D1D1F;line-height:1.55">{conf_reas}</div>'
+        f'</div></div>',
+        unsafe_allow_html=True,
+    )
+
+    st.markdown("<br>", unsafe_allow_html=True)
+
+    # ── Section 7: Interview Questions ───────────────────────────────────────
+    section_label("INTERVIEW QUESTIONS")
+    tech_qs  = payload.get("technical_questions", [])
+    behav_qs = payload.get("behavioral_questions", [])
+
+    iq_col1, iq_col2 = st.columns([3, 2], gap="large")
+
+    with iq_col1:
+        st.markdown(
+            '<div style="font-size:0.75rem;font-weight:700;color:#0071E3;'
+            'text-transform:uppercase;letter-spacing:0.07em;margin-bottom:0.5rem">'
+            '\U0001f4bb Technical (3)</div>',
+            unsafe_allow_html=True,
+        )
+        for i, q in enumerate(tech_qs[:3], start=1):
+            st.markdown(
+                f'<div style="background:#F0F7FF;border:1px solid #C8DEFF;'
+                f'border-radius:8px;padding:0.75rem 1rem;margin:0.375rem 0;'
+                f'font-size:0.875rem;color:#1D1D1F;line-height:1.55">'
+                f'<strong style="color:#0071E3">{i}.</strong> {q}</div>',
+                unsafe_allow_html=True,
+            )
+
+    with iq_col2:
+        st.markdown(
+            '<div style="font-size:0.75rem;font-weight:700;color:#6E3FA3;'
+            'text-transform:uppercase;letter-spacing:0.07em;margin-bottom:0.5rem">'
+            '\U0001f9e0 Behavioural (2)</div>',
+            unsafe_allow_html=True,
+        )
+        for i, q in enumerate(behav_qs[:2], start=1):
+            st.markdown(
+                f'<div style="background:#F5F0FF;border:1px solid #D5C8F0;'
+                f'border-radius:8px;padding:0.75rem 1rem;margin:0.375rem 0;'
+                f'font-size:0.875rem;color:#1D1D1F;line-height:1.55">'
+                f'<strong style="color:#6E3FA3">{i}.</strong> {q}</div>',
+                unsafe_allow_html=True,
+            )
+
+    st.markdown("<br>", unsafe_allow_html=True)
+
+    # ── Section 8: Skill Evidence (expandable) ────────────────────────────────
+    skill_evidence = payload.get("skill_evidence", [])
+    if skill_evidence:
+        with st.expander(f"\U0001f50d Skill Evidence ({len(skill_evidence)} skills)", expanded=False):
+            for ev in skill_evidence:
+                matched = ev.get("matched", False)
+                skl     = ev.get("skill", "")
+                evid    = ev.get("evidence", "")
+                tick    = "\u2713" if matched else "\u2717"
+                clr     = "#1A8917" if matched else "#CC0000"
+                bg      = "#F5FFF5" if matched else "#FFF5F5"
+                st.markdown(
+                    f'<div style="background:{bg};border-radius:6px;'
+                    f'padding:0.5rem 0.75rem;margin:0.2rem 0;'
+                    f'display:flex;align-items:flex-start;gap:0.5rem">'
+                    f'<span style="color:{clr};font-weight:700;flex-shrink:0">{tick}</span>'
+                    f'<div>'
+                    f'<span style="font-size:0.875rem;font-weight:600;color:#1D1D1F">{skl}</span>'
+                    f'<div style="font-size:0.8rem;color:#6E6E73;margin-top:0.1rem">{evid}</div>'
+                    f'</div></div>',
+                    unsafe_allow_html=True,
+                )
 
 
 # -- Helper Functions ----------------------------------------------------------
