@@ -265,6 +265,62 @@ def _run_csv_ranking(project: HiringProject) -> None:
         )
 
 
+def _run_resume_ranking(project: HiringProject) -> None:
+    """
+    Sprint 5A: Run the ranking pipeline on resume_candidates.
+    Mirrors _run_csv_ranking() — feeds project.resume_candidates through
+    run_ranking_from_candidates(). The ranking engine sees zero difference.
+    Writes results directly to session state.
+    """
+    candidates = getattr(project, "resume_candidates", None) or []
+    if not candidates:
+        st.session_state["ranking_error"] = (
+            "No resume candidates found. "
+            "Go to Candidate Sources, upload resumes, and click ✨ Analyze Resumes first."
+        )
+        return
+
+    st.session_state["ranking_running"] = True
+
+    loading_slot = st.empty()
+    loading_slot.markdown(
+        """
+<div style="position:fixed;top:0;left:0;width:100vw;height:100vh;
+            background:#FFFFFF;z-index:9999999;
+            display:flex;flex-direction:column;
+            align-items:center;justify-content:center;
+            font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif">
+  <div style="font-size:1.625rem;font-weight:800;color:#1D1D1F;
+              letter-spacing:-0.035em;margin-bottom:0.375rem">APTIVA AI</div>
+  <div style="font-size:0.8125rem;color:#86868B;margin-bottom:2rem">
+    Processing resume candidates&hellip;
+  </div>
+  <div style="font-size:0.875rem;color:#6E6E73">Normalising &rarr; Ranking &rarr; Scoring</div>
+</div>""",
+        unsafe_allow_html=True,
+    )
+
+    jd_dict = project.job_description.to_dict()
+    try:
+        result_data = run_ranking_from_candidates(candidates, jd_dict)
+    except Exception as exc:
+        loading_slot.empty()
+        st.session_state["ranking_running"] = False
+        st.session_state["ranking_error"]   = f"Ranking failed: {exc}"
+        return
+
+    loading_slot.empty()
+    st.session_state["ranking_running"]   = False
+    st.session_state["results"]           = result_data.get("results", [])
+    st.session_state["total_candidates"]  = result_data.get("total", 0)
+    st.session_state["submission_csv"]    = result_data.get("submission_csv", "")
+    st.session_state["ranking_done"]      = True
+    if st.session_state["results"] and not st.session_state.get("selected_candidate_id"):
+        st.session_state["selected_candidate_id"] = (
+            st.session_state["results"][0]["candidate"]["candidate_id"]
+        )
+
+
 def init_state():
     defaults = {
         # Navigation
@@ -355,7 +411,7 @@ def render_sidebar(config: dict, loader: DatasetLoader):
 
         st.markdown("---")
 
-        # Sprint 3B: compute can_rank — true for demo path OR CSV/Excel with bytes loaded
+        # Sprint 3B / 5A: compute can_rank
         _ap_sb   = st.session_state.get("active_project")
         _src_sb  = _ap_sb.candidate_source if _ap_sb else "demo"
         _csv_rdy = (
@@ -363,8 +419,13 @@ def render_sidebar(config: dict, loader: DatasetLoader):
             and _ap_sb is not None
             and bool(getattr(_ap_sb, "csv_file_bytes", None))
         )
+        _resume_rdy = (
+            _src_sb == "resume"
+            and _ap_sb is not None
+            and bool(getattr(_ap_sb, "resume_candidates", None))
+        )
         candidates_path = loader.get_candidates_path()
-        can_rank = bool(candidates_path) or _csv_rdy
+        can_rank = bool(candidates_path) or _csv_rdy or _resume_rdy
 
         # Dataset status
         st.markdown('<div style="font-size:0.6875rem;font-weight:600;color:#86868B;text-transform:uppercase;letter-spacing:0.1em;margin-bottom:0.5rem">Dataset</div>', unsafe_allow_html=True)
@@ -378,6 +439,15 @@ def render_sidebar(config: dict, loader: DatasetLoader):
             st.markdown(
                 f'<div style="font-size:0.8125rem;color:#1A8917;display:flex;align-items:center;gap:0.35rem">{_ck} {fname}</div>'
                 f'<div style="font-size:0.75rem;color:#6E6E73;margin-top:0.125rem">{_n} candidates ready</div>',
+                unsafe_allow_html=True,
+            )
+        elif _resume_rdy:
+            _res_cands = getattr(_ap_sb, "resume_candidates", []) or []
+            _n_res     = len(_res_cands)
+            _ck = '<svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#1A8917" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="display:inline-block;vertical-align:-1px"><polyline points="20 6 9 17 4 12"/></svg>'
+            st.markdown(
+                f'<div style="font-size:0.8125rem;color:#1A8917;display:flex;align-items:center;gap:0.35rem">{_ck} {_n_res} resume(s) analyzed</div>'
+                f'<div style="font-size:0.75rem;color:#6E6E73;margin-top:0.125rem">{_n_res} candidates ready</div>',
                 unsafe_allow_html=True,
             )
         elif candidates_path:
@@ -472,9 +542,14 @@ def auto_run_ranking(loader: DatasetLoader):
     if st.session_state.get("ranking_done"):
         return  # Already ranked — nothing to do
 
-    # ── Sprint 3B: dispatch to CSV/Excel path ─────────────────────────────
+    # ── Sprint 5A: dispatch to Resume path ───────────────────────────────
     active_project: HiringProject = st.session_state.get("active_project")
     source = active_project.candidate_source if active_project else "demo"
+    if source == "resume":
+        _run_resume_ranking(active_project)
+        return
+
+    # ── Sprint 3B: dispatch to CSV/Excel path ─────────────────────────────
     if source in ("csv", "excel"):
         _run_csv_ranking(active_project)
         return

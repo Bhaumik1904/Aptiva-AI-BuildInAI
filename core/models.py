@@ -132,6 +132,12 @@ class HiringProject:
     csv_file_bytes: Optional[bytes] = None
     # Sprint 3B: plain-dict version of the last IngestionReport (avoids circular import).
     last_ingestion_report: Optional[Dict] = None
+    # Sprint 5A: list of internal candidate dicts produced by ResumeIntelligenceAgent.
+    # Shape identical to CandidateNormalizer output — feeds run_ranking_from_candidates().
+    resume_candidates: Optional[List[Any]] = None
+    # Sprint 5A: metadata list, one entry per processed resume file.
+    # Each entry: {filename, size_str, name, yoe, n_skills, n_certs, error}
+    resume_file_infos: Optional[List[Dict]] = None
 
     @property
     def display_name(self) -> str:

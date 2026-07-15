@@ -20,6 +20,17 @@ jd_agent:
   temperature: 0.1               # Near-zero for deterministic JSON output
   max_output_tokens: 2048        # Sufficient for all JD field extraction
 
+# ── Resume Intelligence Agent (Sprint 5A) ────────────────────────────────────
+# Same 3-tier model resolution as jd_agent:
+#   1. resume_agent.model   ← change this to switch models
+#   2. gemini_model (below) ← global fallback
+#   3. Hard-coded: gemini-2.5-flash
+resume_agent:
+  enabled: true
+  model: "gemini-2.5-flash"      # Configurable — change to gemini-2.5-pro if needed
+  temperature: 0.1               # Near-zero for deterministic extraction
+  max_output_tokens: 2048        # Sufficient for full resume extraction
+
 # ── Gemini Settings (only used when enable_reasoning_enrichment: true) ───────
 gemini_model: "gemini-2.5-pro"
 gemini_api_key: ""                   # Or set GEMINI_API_KEY env var

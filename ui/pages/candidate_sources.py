@@ -17,6 +17,7 @@ Sprint 4:   Resume / ZIP parsing.
 
 import streamlit as st
 
+from agents.resume_agent import ResumeIntelligenceAgent
 from core.csv_loader import CSVLoader, ExcelLoader
 from core.models import HiringProject
 from ui.icons import icon
@@ -357,6 +358,246 @@ def _error_list_html(errors: list) -> str:
 
 
 # ---------------------------------------------------------------------------
+# Resume Upload detail panel
+# ---------------------------------------------------------------------------
+
+_RESUME_CARD_CSS = """
+<style>
+.resume-step-card {
+  background:#F0FBF0;border:1px solid #C3EAC3;border-radius:8px;
+  padding:0.75rem 1rem;margin-top:0.5rem;
+}
+.resume-step-title {
+  font-size:0.75rem;font-weight:700;color:#1A8917;
+  text-transform:uppercase;letter-spacing:0.07em;margin-bottom:0.4rem;
+}
+.resume-step-row {
+  font-size:0.8rem;color:#1D1D1F;
+  display:flex;align-items:flex-start;gap:0.35rem;
+  margin-bottom:0.2rem;line-height:1.4;
+}
+.resume-step-icon { color:#1A8917;font-weight:700;flex-shrink:0; }
+.resume-err-card {
+  background:#FFF5F5;border:1px solid #F5C0C0;border-radius:8px;
+  padding:0.75rem 1rem;margin-top:0.5rem;
+}
+.resume-err-title {
+  font-size:0.75rem;font-weight:700;color:#CC0000;
+  text-transform:uppercase;letter-spacing:0.07em;margin-bottom:0.3rem;
+}
+.resume-err-msg { font-size:0.8rem;color:#4A1515;word-break:break-word; }
+.resume-meta-bar {
+  background:#F5F5F7;border:1px solid #E8E8ED;border-radius:6px;
+  padding:0.5rem 0.875rem;font-size:0.8rem;color:#6E6E73;
+  margin-top:0.375rem;
+}
+</style>
+"""
+
+
+def _render_resume_panel(project: HiringProject, state: dict) -> None:
+    """
+    Resume Upload pipeline panel.
+
+    Flow:
+      1. API key check — warn and return early if not configured.
+      2. Multi-file uploader (PDF/DOCX).
+      3. Per-file Analyze button that calls ResumeIntelligenceAgent.
+      4. ✓ step card per processed file.
+      5. Error card per failed file (file preserved, retry available).
+      6. Persistent results bar showing total accumulated candidates.
+      7. Clear button to reset all resume candidates for this project.
+    """
+    import re
+
+    pid       = project.project_id
+    cfg       = state.get("app_config", {})
+    agent     = ResumeIntelligenceAgent(cfg)
+
+    st.markdown(_RESUME_CARD_CSS, unsafe_allow_html=True)
+
+    # -- Header ----------------------------------------------------------------
+    model_badge = (
+        f'<span style="display:inline-block;font-size:0.6875rem;'
+        f'background:#E8F2FF;color:#0071E3;border-radius:4px;'
+        f'padding:0.1rem 0.4rem;font-weight:600;margin-left:0.4rem;'
+        f'vertical-align:middle">{agent.model_name}</span>'
+    )
+    st.markdown(
+        f'<div style="background:linear-gradient(135deg,#F0F7FF 0%,#F5F5F7 100%);'
+        f'border:1px solid #C0D9F5;border-radius:10px;padding:1rem 1.25rem 0.875rem;'
+        f'margin-bottom:0.75rem">'
+        f'<div style="font-size:0.9375rem;font-weight:700;color:#0071E3;'
+        f'letter-spacing:-0.015em">'
+        f'\U0001f4c4 AI Resume Analysis{model_badge}</div>'
+        f'<div style="font-size:0.8125rem;color:#6E6E73;margin-top:0.2rem">'
+        f'Upload PDF or DOCX resumes — Gemini extracts candidate profiles automatically.'
+        f'</div></div>',
+        unsafe_allow_html=True,
+    )
+
+    # -- API key guard ---------------------------------------------------------
+    if not agent.is_configured():
+        st.warning(
+            "**Gemini API key not configured.** "
+            "Set `gemini_api_key` in `config.yaml` or export `GEMINI_API_KEY`.",
+            icon="\u26a0\ufe0f",
+        )
+        return
+
+    # -- Multi-file uploader ---------------------------------------------------
+    uploaded_files = st.file_uploader(
+        "Upload resumes",
+        type=["pdf", "docx"],
+        accept_multiple_files=True,
+        key=f"resume_uploader_{pid}",
+        label_visibility="collapsed",
+        help="Upload one or more PDF or DOCX resume files.",
+    )
+
+    # -- Analyze button --------------------------------------------------------
+    col_btn, col_clear, col_space = st.columns([2, 1, 3])
+    with col_btn:
+        analyze_clicked = st.button(
+            "\u2728 Analyze Resumes",
+            type="primary",
+            use_container_width=True,
+            key=f"resume_analyze_{pid}",
+            disabled=not bool(uploaded_files),
+        )
+    with col_clear:
+        clear_clicked = st.button(
+            "\u2715 Clear All",
+            type="secondary",
+            use_container_width=True,
+            key=f"resume_clear_{pid}",
+        )
+
+    if clear_clicked:
+        project.resume_candidates = None
+        project.resume_file_infos = None
+        state.pop(f"resume_results_{pid}", None)
+        st.rerun()
+
+    # -- Run analysis on click -------------------------------------------------
+    if analyze_clicked and uploaded_files:
+        new_candidates = list(project.resume_candidates or [])
+        new_file_infos = list(project.resume_file_infos or [])
+
+        for uf in uploaded_files:
+            file_bytes = uf.getvalue()
+            filename   = uf.name
+            size_kb    = uf.size / 1024
+            size_str   = (
+                f"{size_kb:.1f} KB" if size_kb < 1024
+                else f"{size_kb / 1024:.2f} MB"
+            )
+
+            with st.spinner(f"Analyzing `{filename}`\u2026"):
+                try:
+                    candidate, steps = agent.analyze(file_bytes, filename)
+                    new_candidates.append(candidate)
+                    new_file_infos.append({
+                        "filename": filename,
+                        "size_str": size_str,
+                        "steps":    steps,
+                        "error":    None,
+                        "candidate_id": candidate["candidate_id"],
+                        "name":     candidate["profile"]["anonymized_name"],
+                        "yoe":      candidate["profile"]["years_of_experience"],
+                        "n_skills": len(candidate["skills"]),
+                        "n_certs":  len(candidate["certifications"]),
+                    })
+                except (ValueError, RuntimeError, Exception) as exc:  # noqa: BLE001
+                    new_file_infos.append({
+                        "filename": filename,
+                        "size_str": size_str,
+                        "steps":    [],
+                        "error":    str(exc),
+                        "candidate_id": None,
+                        "name":     None,
+                        "yoe":      None,
+                        "n_skills": 0,
+                        "n_certs":  0,
+                    })
+
+        project.resume_candidates = new_candidates
+        project.resume_file_infos = new_file_infos
+        # Reset ranking so new candidates will be re-ranked
+        state["ranking_done"] = False
+        state["results"]      = []
+
+    # -- Display results -------------------------------------------------------
+    file_infos = project.resume_file_infos or []
+    if file_infos:
+        st.markdown(
+            f'<div style="font-size:0.6875rem;font-weight:700;color:#86868B;'
+            f'text-transform:uppercase;letter-spacing:0.08em;'
+            f'margin:0.75rem 0 0.4rem">Results — {len(file_infos)} file(s) processed</div>',
+            unsafe_allow_html=True,
+        )
+        for fi in file_infos:
+            fname = fi.get("filename", "")
+            ssize = fi.get("size_str", "")
+            error = fi.get("error")
+
+            if error:
+                # Error card
+                st.markdown(
+                    f'<div class="resume-err-card">'
+                    f'<div class="resume-err-title">\u26a0 Failed: {fname}</div>'
+                    f'<div class="resume-err-msg">{error}</div>'
+                    f'<div class="resume-err-msg" style="margin-top:0.35rem;color:#6E6E73">'
+                    f'The file is preserved. Fix the issue and click '
+                    f'<strong>\u2728 Analyze Resumes</strong> to retry.</div>'
+                    f'</div>',
+                    unsafe_allow_html=True,
+                )
+            else:
+                # Success step card
+                steps = fi.get("steps", [])
+
+                def _bold(t: str) -> str:
+                    return re.sub(r"\*\*(.+?)\*\*", r"<strong>\1</strong>", t)
+
+                step_html = "".join(
+                    f'<div class="resume-step-row">'
+                    f'<span class="resume-step-icon">\u2713</span>'
+                    f'<span>{_bold(s)}</span></div>'
+                    for s in steps
+                )
+                meta_bar = (
+                    f'<div class="resume-meta-bar">'
+                    f'ID: <code>{fi.get("candidate_id","?")}</code>'
+                    f' &nbsp;&middot;&nbsp; {ssize}'
+                    f' &nbsp;&middot;&nbsp; source: <strong>resume</strong>'
+                    f'</div>'
+                )
+                st.markdown(
+                    f'<div class="resume-step-card">'
+                    f'<div class="resume-step-title">\u2713 {fname}</div>'
+                    f'{step_html}'
+                    f'{meta_bar}'
+                    f'</div>',
+                    unsafe_allow_html=True,
+                )
+
+    # -- Total candidates bar --------------------------------------------------
+    total = len(project.resume_candidates or [])
+    if total > 0:
+        st.markdown(
+            f'<div style="background:#EBF5EA;border:1px solid #A8D5A2;'
+            f'border-radius:8px;padding:0.75rem 1.25rem;margin-top:0.75rem;'
+            f'font-size:0.8125rem;color:#1A8917;font-weight:600">'
+            f'\u2713 {total} candidate profile{"s" if total != 1 else ""} ready for ranking.'
+            f'<span style="color:#6E6E73;font-weight:400"> '
+            f'Click <strong>&#9654; Run Ranking Analysis</strong> in the sidebar.</span>'
+            f'</div>',
+            unsafe_allow_html=True,
+        )
+
+
+# ---------------------------------------------------------------------------
 # Main render
 # ---------------------------------------------------------------------------
 
@@ -491,19 +732,25 @@ def render(state: dict):
     col3, col4 = st.columns(2, gap="large")
 
     with col3:
-        _source_card(
+        resume_clicked = _source_card(
             emoji="&#128196;",
             title="Resume Upload",
             description=(
-                "Upload multiple PDF or DOCX resumes. Each resume will be parsed "
-                "and ranked automatically using AI extraction."
+                "Upload individual PDF or DOCX resumes. Each resume is analyzed "
+                "by the AI Resume Intelligence Agent and ready for ranking."
             ),
-            status="Coming in Sprint 4",
-            status_color="grey",
+            status="Available",
+            status_color="green",
             card_key="resume",
-            is_selected=False,
-            disabled=True,
+            is_selected=(current_source == "resume"),
+            disabled=False,
         )
+        if resume_clicked:
+            _set_source(project, "resume", state)
+            st.rerun()
+
+        if current_source == "resume":
+            _render_resume_panel(project, state)
 
     with col4:
         _source_card(
@@ -513,7 +760,7 @@ def render(state: dict):
                 "Upload a ZIP archive containing multiple resumes. "
                 "Bulk processing with automatic extraction and parsing."
             ),
-            status="Coming in Sprint 4",
+            status="Coming in Sprint 6",
             status_color="grey",
             card_key="zip",
             is_selected=False,
