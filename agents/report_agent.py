@@ -1,0 +1,1 @@
+"""Report Generation Agent. Synthesizes hiring reports."""

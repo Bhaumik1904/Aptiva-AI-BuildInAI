@@ -1,0 +1,1 @@
+"""Memory Agent. Stores recruiter preferences (Mem0)."""
