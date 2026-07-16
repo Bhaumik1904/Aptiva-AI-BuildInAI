@@ -60,7 +60,7 @@ gemini_api_key: ""                   # Or set GEMINI_API_KEY env var
 # ── Mem0 Settings (Sprint 6A — Recruiter Memory Layer) ───────────────────────
 # Set mem0_api_key or export MEM0_API_KEY env var.
 # If not configured, the app works normally — memory features are silently disabled.
-mem0_api_key: "m0-DrM3efdruBPkKAWmYpMFLsF0J0VElsdwJyASkrHF"                     # Or set MEM0_API_KEY env var
+mem0_api_key: ""                     # Or set MEM0_API_KEY env var
 mem0_agent:
   default_user_id: "aptiva_recruiter" # Per-recruiter ID (change for multi-user)
   memory_limit: 10                    # Max memories returned per recall()
