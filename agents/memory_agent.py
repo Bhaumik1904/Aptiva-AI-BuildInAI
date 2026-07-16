@@ -3,6 +3,15 @@ APTIVA AI — Recruiter Memory Agent
 ====================================
 Sprint 6A: Store and retrieve recruiter preferences using Mem0.
 
+Mem0 SDK compatibility: mem0ai v2.0.12
+  - Import: from mem0 import MemoryClient  (module name is `mem0`, not `mem0ai`)
+  - add(messages, **kwargs): user_id must go in filters={"user_id": ...}
+    Top-level user_id= is rejected by the v2 API and raises ValueError.
+  - search(query, **kwargs): same; limit renamed to top_k.
+  - get_all(**kwargs): same; limit renamed to page_size.
+  - Return values from search() and get_all() are Dict with a "results" key,
+    not bare lists (v1 behaviour).
+
 Design constraints:
 - Completely stateless — no Streamlit imports, no session state.
 - Every public method returns gracefully if Mem0 is unavailable.
@@ -191,24 +200,28 @@ class RecruiterMemoryAgent:
         if not self.is_configured():
             return []
 
-        uid   = user_id or self._user_id
-        n     = limit  or self._limit
+        uid = user_id or self._user_id
+        n   = limit   or self._limit
 
         try:
-            client  = self._get_client()
-            results = client.search(query, user_id=uid, limit=n)
-            # Mem0 returns list of dicts with "memory" key
-            if isinstance(results, list):
-                memories = []
-                for item in results:
-                    if isinstance(item, dict):
-                        mem = item.get("memory") or item.get("text") or ""
-                    else:
-                        mem = str(item)
-                    if mem and str(mem).strip():
-                        memories.append(str(mem).strip())
-                return memories
-            return []
+            client = self._get_client()
+            # v2 API: user_id must be inside filters={}; limit renamed to top_k
+            result = client.search(
+                query,
+                filters={"user_id": uid},
+                top_k=n,
+            )
+            # v2 returns Dict{"results": [...]} not a bare list
+            items = result.get("results", []) if isinstance(result, dict) else result
+            memories = []
+            for item in (items if isinstance(items, list) else []):
+                if isinstance(item, dict):
+                    mem = item.get("memory") or item.get("text") or ""
+                else:
+                    mem = str(item)
+                if mem and str(mem).strip():
+                    memories.append(str(mem).strip())
+            return memories
         except Exception:   # noqa: BLE001
             return []
 
@@ -229,19 +242,23 @@ class RecruiterMemoryAgent:
         n   = limit   or self._limit
 
         try:
-            client  = self._get_client()
-            results = client.get_all(user_id=uid, limit=n)
-            if isinstance(results, list):
-                memories = []
-                for item in results:
-                    if isinstance(item, dict):
-                        mem = item.get("memory") or item.get("text") or ""
-                    else:
-                        mem = str(item)
-                    if mem and str(mem).strip():
-                        memories.append(str(mem).strip())
-                return memories
-            return []
+            client = self._get_client()
+            # v2 API: user_id must be inside filters={}; limit renamed to page_size
+            result = client.get_all(
+                filters={"user_id": uid},
+                page_size=n,
+            )
+            # v2 returns Dict{"count": N, "results": [...]} not a bare list
+            items = result.get("results", []) if isinstance(result, dict) else result
+            memories = []
+            for item in (items if isinstance(items, list) else []):
+                if isinstance(item, dict):
+                    mem = item.get("memory") or item.get("text") or ""
+                else:
+                    mem = str(item)
+                if mem and str(mem).strip():
+                    memories.append(str(mem).strip())
+            return memories
         except Exception:   # noqa: BLE001
             return []
 
@@ -271,6 +288,9 @@ class RecruiterMemoryAgent:
         Each sentence is stored individually so Mem0 can deduplicate
         semantically similar memories across sessions.
 
+        v2 API: user_id must be passed inside filters={"user_id": ...}.
+        Top-level user_id= raises ValueError in mem0ai>=2.0.
+
         Returns True if all writes succeeded, False on any error.
         """
         if not texts:
@@ -280,9 +300,10 @@ class RecruiterMemoryAgent:
             client = self._get_client()
             for text in texts:
                 if text and text.strip():
+                    # v2 API: identity fields go in filters, not at top level
                     client.add(
                         [{"role": "user", "content": text.strip()}],
-                        user_id=user_id,
+                        filters={"user_id": user_id},
                     )
             return True
         except Exception:   # noqa: BLE001
