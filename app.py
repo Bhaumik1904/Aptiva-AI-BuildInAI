@@ -34,6 +34,9 @@ from ui.styles import inject_styles
 from ui.pages import home, ai_analysis, candidate_profile, comparison, judge_mode_page, analytics
 from ui.pages import projects as projects_page
 from ui.pages import candidate_sources as candidate_sources_page
+# ── Sprint 6A: Memory + Shortlist agents ───────────────────────────────────────
+from agents.memory_agent import RecruiterMemoryAgent
+from agents.shortlist_agent import ShortlistAgent
 
 
 # ── Load Config ───────────────────────────────────────────────────────────────
@@ -263,6 +266,8 @@ def _run_csv_ranking(project: HiringProject) -> None:
         st.session_state["selected_candidate_id"] = (
             st.session_state["results"][0]["candidate"]["candidate_id"]
         )
+    # ── Sprint 6A: generate shortlist after CSV/Excel ranking ─────────────────
+    _generate_shortlist_from_state(st.session_state.get("app_config", {}))
 
 
 def _run_resume_ranking(project: HiringProject) -> None:
@@ -319,6 +324,8 @@ def _run_resume_ranking(project: HiringProject) -> None:
         st.session_state["selected_candidate_id"] = (
             st.session_state["results"][0]["candidate"]["candidate_id"]
         )
+    # ── Sprint 6A: generate shortlist after resume ranking ────────────────────
+    _generate_shortlist_from_state(st.session_state.get("app_config", {}))
 
 
 def init_state():
@@ -341,6 +348,11 @@ def init_state():
         "projects":              {},
         # active_project: the currently selected HiringProject (or None)
         "active_project":        None,
+        # ── Sprint 6A: Recruiter Memory + Shortlist ─────────────────────────────
+        # recruiter_memories: plain-text list from Mem0 for the active project
+        "recruiter_memories":    [],
+        # shortlist: List[ShortlistEntry] — top-N from ShortlistAgent
+        "shortlist":             [],
     }
     for key, val in defaults.items():
         if key not in st.session_state:
@@ -906,11 +918,14 @@ def main():
     loader = setup_dataset()
 
     # Sprint 4: Make config available to pages via session state.
-    # Pages read state.get("app_config", {}) — no circular imports, no signature changes.
     st.session_state["app_config"] = config
 
     # Auto-run ranking silently on first load
     auto_run_ranking(loader)
+
+    # Sprint 6A: Retrieve recruiter memories once per active project load.
+    # Fire-and-forget — Mem0 unavailability never blocks the UI.
+    _refresh_recruiter_memories(config)
 
     # Render sidebar
     render_sidebar(config, loader)
@@ -963,3 +978,70 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+
+# ── Sprint 6A: Memory + Shortlist helpers ────────────────────────────────────────────────
+
+def _refresh_recruiter_memories(config: dict) -> None:
+    """
+    Retrieve recruiter memories from Mem0 for the active project.
+
+    Runs once per active project (keyed by project_id in session state).
+    Results cached in st.session_state["recruiter_memories"].
+    Fire-and-forget: silently returns on any error.
+    """
+    active_project = st.session_state.get("active_project")
+    if active_project is None:
+        return
+
+    cache_key = f"_mem_fetched_{active_project.project_id}"
+    if st.session_state.get(cache_key):
+        return  # Already fetched for this project
+
+    try:
+        agent = RecruiterMemoryAgent(config)
+        if not agent.is_configured():
+            st.session_state["recruiter_memories"] = []
+            st.session_state[cache_key] = True
+            return
+
+        jd    = active_project.job_description
+        query = f"recruiter preferences for {jd.title} role with {' '.join((jd.core_skills or [])[:5])}"
+        memories = agent.recall(query=query)
+        if not memories:
+            memories = agent.recall_all(limit=10)
+
+        st.session_state["recruiter_memories"] = memories
+        st.session_state[cache_key] = True
+
+        # Also fire-and-forget: store project-created memory (idempotent via Mem0 dedup)
+        agent.store_project_created(active_project)
+    except Exception:   # noqa: BLE001
+        st.session_state["recruiter_memories"] = []
+        st.session_state[cache_key] = True
+
+
+def _generate_shortlist_from_state(config: dict) -> None:
+    """
+    Generate the AI Shortlist from the current ranked results.
+
+    Called immediately after any ranking pipeline completes.
+    The shortlist is stored in st.session_state["shortlist"].
+    The ranking order and scores are NEVER modified.
+    """
+    results  = st.session_state.get("results", [])
+    memories = st.session_state.get("recruiter_memories", [])
+    active_project = st.session_state.get("active_project")
+    jd = active_project.job_description if active_project else None
+
+    try:
+        agent = ShortlistAgent()
+        shortlist = agent.generate(
+            results  = results,
+            jd       = jd,
+            memories = memories,
+            top_n    = 5,
+        )
+        st.session_state["shortlist"] = shortlist
+    except Exception:   # noqa: BLE001
+        st.session_state["shortlist"] = []

@@ -7,6 +7,7 @@ filters, and immediate value demonstration.
 import pandas as pd
 import streamlit as st
 
+from agents.shortlist_agent import ShortlistAgent
 from ui.components import (
     recommendation_badge,
     render_empty_state,
@@ -55,6 +56,18 @@ def render(state: dict):
         st.metric("Strong Hires", strong_yes)
 
     st.markdown("---")
+
+    # -- AI Shortlist Panel (Sprint 6A) ----------------------------------------
+    shortlist = state.get("shortlist", [])
+    if shortlist:
+        _render_shortlist_panel(shortlist, state)
+        st.markdown("---")
+
+    # -- Recruiter Insights Panel (Sprint 6A) -----------------------------------
+    memories = state.get("recruiter_memories", [])
+    if memories:
+        _render_recruiter_insights(memories)
+        st.markdown("---")
 
     # ── Filters Row ───────────────────────────────────────────────────────
     with st.expander("Filters & Search", expanded=False):
@@ -213,14 +226,138 @@ def render(state: dict):
                     slot = "Candidate A" if len(compare) == 1 else "Candidate B"
                     st.success(f"Added {selected_cid} as {slot}.")
 
-    # ── Download ──────────────────────────────────────────────────────────
+    # -- Download --------------------------------------------------------------
     st.markdown("---")
     if state.get("submission_csv"):
         recruiter_csv = df.to_csv(index=False).encode('utf-8')
         st.download_button(
-            "⬇ Download Recruiter Report",
+            "\u2b07 Download Recruiter Report",
             data=recruiter_csv,
             file_name="recruiter_report.csv",
             mime="text/csv",
             use_container_width=True,
         )
+
+
+# -- Sprint 6A: AI Shortlist + Recruiter Insights helpers ----------------------
+
+_REC_COLORS = {
+    "STRONG_YES": ("#EBF5EA", "#1A8917", "1px solid #A8D5A2", "\U0001f7e2", "Strong Hire"),
+    "YES":        ("#F0F7FF", "#0071E3", "1px solid #C8DEFF", "\U0001f535", "Hire"),
+    "MAYBE":      ("#FFF8E6", "#C47000", "1px solid #F5DDA0", "\U0001f7e1", "Consider"),
+    "NO":         ("#FFF5F5", "#CC0000", "1px solid #F5C0C0", "\U0001f534", "Not Recommended"),
+}
+
+
+def _render_shortlist_panel(shortlist: list, state: dict) -> None:
+    """Render the AI Shortlist section with one card per shortlisted candidate."""
+    section_label("\U0001f3c6 AI SHORTLIST")
+    st.markdown(
+        '<div style="font-size:0.8125rem;color:#6E6E73;margin-bottom:0.875rem">'
+        "Top candidates from your ranked results \u2014 ready for immediate review. "
+        "Ranking order and scores are unchanged.</div>",
+        unsafe_allow_html=True,
+    )
+
+    cols = st.columns(len(shortlist), gap="small")
+
+    for col, entry in zip(cols, shortlist):
+        with col:
+            candidate = entry["candidate"]
+            rank      = entry["rank"]
+            hi_score  = entry["hi_score"]
+            rec       = entry["recommendation"]
+            strengths = entry["strengths"]
+            risks     = entry["risks"]
+            mem_note  = entry["memory_note"]
+            cid       = candidate.get("candidate_id", "")
+            profile   = candidate.get("profile", {})
+            name      = profile.get("anonymized_name", cid)
+            role      = profile.get("current_title", "")
+
+            bg, clr, border, dot, label = _REC_COLORS.get(
+                rec, ("#F5F5F7", "#6E6E73", "1px solid #E8E8ED", "\u26aa", "Consider")
+            )
+
+            # Card header
+            st.markdown(
+                f'<div style="background:{bg};border:{border};border-radius:10px;'
+                f'padding:0.875rem 0.875rem 0.625rem;">'
+                f'<div style="display:flex;align-items:center;justify-content:space-between;'
+                f'margin-bottom:0.3rem;">'
+                f'<div style="font-size:0.6875rem;font-weight:700;color:#86868B;'
+                f'text-transform:uppercase;letter-spacing:0.07em">#{rank}</div>'
+                f'<div style="font-size:0.6875rem;font-weight:700;color:{clr};'
+                f'background:white;padding:0.1rem 0.35rem;border-radius:3px;'
+                f'border:1px solid {clr}33">{dot} {label}</div>'
+                f'</div>'
+                f'<div style="font-size:0.875rem;font-weight:700;color:#1D1D1F;'
+                f'margin-bottom:0.1rem;line-height:1.3;word-break:break-word">{name}</div>'
+                f'<div style="font-size:0.75rem;color:#6E6E73;margin-bottom:0.45rem;'
+                f'line-height:1.35">{role[:38] + "..." if len(role) > 38 else role}</div>'
+                f'<div style="font-size:1.375rem;font-weight:800;color:{clr};'
+                f'letter-spacing:-0.04em;margin-bottom:0.4rem">{hi_score:.0f}'
+                f'<span style="font-size:0.75rem;font-weight:500;color:#86868B">/100 HI\u2122</span>'
+                f'</div>'
+                f'</div>',
+                unsafe_allow_html=True,
+            )
+
+            # Strengths
+            for s in strengths[:2]:
+                st.markdown(
+                    f'<div style="font-size:0.75rem;color:#1D1D1F;'
+                    f'display:flex;align-items:flex-start;gap:0.3rem;margin:0.15rem 0">'
+                    f'<span style="color:#1A8917;font-weight:700;flex-shrink:0">\u2713</span>'
+                    f'<span>{s}</span></div>',
+                    unsafe_allow_html=True,
+                )
+
+            # Risks (first one only)
+            if risks:
+                st.markdown(
+                    f'<div style="font-size:0.7rem;color:#CC0000;margin-top:0.3rem;'
+                    f'display:flex;align-items:flex-start;gap:0.25rem">'
+                    f'<span style="flex-shrink:0">\u26a0\ufe0f</span>'
+                    f'<span>{risks[0]}</span></div>',
+                    unsafe_allow_html=True,
+                )
+
+            # Memory note (Mem0 enrichment — never changes score)
+            if mem_note:
+                st.markdown(
+                    f'<div style="font-size:0.7rem;color:#6E3FA3;margin-top:0.35rem;'
+                    f'padding:0.25rem 0.4rem;background:#F5F0FF;border-radius:4px;'
+                    f'line-height:1.4">{mem_note}</div>',
+                    unsafe_allow_html=True,
+                )
+
+            # View AI Insights button
+            if st.button(
+                "\u2728 View AI Insights",
+                key=f"sl_insights_{cid}_{rank}",
+                use_container_width=True,
+            ):
+                state["selected_candidate_id"]          = cid
+                st.session_state["selected_candidate_id"] = cid
+                st.session_state["page"]                  = "candidate_profile"
+                st.rerun()
+
+
+def _render_recruiter_insights(memories: list) -> None:
+    """Render the Recruiter Insights expander — powered by Mem0 memories."""
+    with st.expander("\U0001f9e0 Recruiter Insights (powered by Mem0)", expanded=False):
+        st.markdown(
+            '<div style="font-size:0.8125rem;color:#6E6E73;margin-bottom:0.75rem">'
+            "Based on your hiring history with Aptiva AI:</div>",
+            unsafe_allow_html=True,
+        )
+        for mem in memories:
+            if mem and mem.strip():
+                st.markdown(
+                    f'<div style="display:flex;align-items:flex-start;gap:0.5rem;'
+                    f'margin:0.3rem 0;font-size:0.875rem;color:#1D1D1F">'
+                    f'<span style="color:#0071E3;font-weight:700;flex-shrink:0">\u2713</span>'
+                    f'<span>{mem.strip()}</span></div>',
+                    unsafe_allow_html=True,
+                )

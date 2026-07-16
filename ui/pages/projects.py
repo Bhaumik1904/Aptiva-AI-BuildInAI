@@ -10,6 +10,7 @@ This page is the entry point for every new hiring flow.
 import streamlit as st
 
 from agents.jd_agent import JDIntelligenceAgent
+from agents.memory_agent import RecruiterMemoryAgent
 from core.models import DEFAULT_JD, HiringProject, JobDescription
 from ui.icons import icon
 from ui.styles import page_header, section_label
@@ -388,6 +389,16 @@ def _render_jd_form(project: HiringProject, state):
             project.job_description.preferred_locations = [l.strip() for l in new_locations.split(",") if l.strip()]
 
             _set_active(state, project)
+            # Sprint 6A: fire-and-forget memory storage (never blocks UI)
+            try:
+                _mem_agent = RecruiterMemoryAgent(state.get("app_config", {}))
+                _mem_agent.store_jd_saved(project.job_description)
+                # Clear the per-project memory cache so recall refreshes on next load
+                _mem_cache_key = f"_mem_fetched_{project.project_id}"
+                if _mem_cache_key in st.session_state:
+                    del st.session_state[_mem_cache_key]
+            except Exception:   # noqa: BLE001
+                pass
             st.success(f"Project saved. Ranking will re-run with the updated JD for '{project.job_description.title}'.")
             st.rerun()
 
