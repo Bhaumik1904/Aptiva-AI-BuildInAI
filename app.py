@@ -1000,9 +1000,6 @@ def main():
         st.session_state["compare_list"] = state["compare_list"]
 
 
-if __name__ == "__main__":
-    main()
-
 
 # ── Sprint 6A: Memory + Shortlist helpers ────────────────────────────────────────────────
 
@@ -1069,3 +1066,6 @@ def _generate_shortlist_from_state(config: dict) -> None:
         st.session_state["shortlist"] = shortlist
     except Exception:   # noqa: BLE001
         st.session_state["shortlist"] = []
+
+if __name__ == "__main__":
+    main()
