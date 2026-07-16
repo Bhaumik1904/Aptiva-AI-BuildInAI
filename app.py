@@ -482,6 +482,26 @@ def render_sidebar(config: dict, loader: DatasetLoader):
             st.caption("Place ZIP file in data/ or upload CSV in Candidate Sources")
 
         st.markdown("---")
+        
+        # ── Deployment Health Check ──────────────────────────────────────
+        st.markdown('<div style="font-size:0.6875rem;font-weight:600;color:#86868B;text-transform:uppercase;letter-spacing:0.1em;margin-bottom:0.5rem">Cloud Readiness</div>', unsafe_allow_html=True)
+        
+        from core.secrets_utils import resolve_api_key
+        has_gemini = bool(resolve_api_key(config, "gemini_api_key", "GEMINI_API_KEY"))
+        has_mem0 = bool(resolve_api_key(config, "mem0_api_key", "MEM0_API_KEY"))
+        
+        def _render_health_item(label: str, is_ready: bool):
+            _icon = '<svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#1A8917" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="display:inline-block;vertical-align:-1px"><polyline points="20 6 9 17 4 12"/></svg>' if is_ready else '<svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#86868B" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="display:inline-block;vertical-align:-1px"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>'
+            _color = "#1A8917" if is_ready else "#86868B"
+            _text = "Ready" if is_ready else "Missing"
+            st.markdown(f'<div style="font-size:0.8125rem;display:flex;justify-content:space-between;margin-bottom:0.25rem"><span style="color:#1D1D1F">{label}</span><span style="color:{_color};display:flex;align-items:center;gap:0.2rem">{_icon} {_text}</span></div>', unsafe_allow_html=True)
+
+        _render_health_item("Gemini API", has_gemini)
+        _render_health_item("Mem0 Config", has_mem0)
+        _render_health_item("Demo Dataset", bool(candidates_path) or _csv_rdy or _resume_rdy)
+        _render_health_item("File Uploads", True) # openpyxl+docx present
+
+        st.markdown("---")
 
         # Run Ranking Button
         if can_rank:

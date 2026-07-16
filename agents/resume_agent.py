@@ -38,9 +38,13 @@ import json
 import os
 import uuid
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple, Set
 
-# Reuse the skill parser from csv_loader — single source of truth.
+import google.generativeai as genai
+import pypdf
+import docx
+
+from core.secrets_utils import resolve_api_key
 from core.csv_loader import _parse_skills, _default_signals
 
 
@@ -138,11 +142,8 @@ class ResumeIntelligenceAgent:
         self._temperature  = float(agent_cfg.get("temperature", 0.1))
         self._max_tokens   = int(agent_cfg.get("max_output_tokens", 2048))
 
-        # API key — config takes precedence; env var as fallback
-        self._api_key = (
-            str(config.get("gemini_api_key", "")).strip()
-            or os.environ.get("GEMINI_API_KEY", "").strip()
-        )
+        # API key — Streamlit Secrets > Env Var > Config
+        self._api_key = resolve_api_key(config, "gemini_api_key", "GEMINI_API_KEY")
 
     # ------------------------------------------------------------------
     # Public API

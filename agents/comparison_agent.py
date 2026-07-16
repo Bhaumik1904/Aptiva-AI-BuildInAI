@@ -37,7 +37,10 @@ import json
 import os
 from typing import Any, Dict, List, Optional, Tuple
 
+import google.generativeai as genai
+
 from core.models import JobDescription
+from core.secrets_utils import resolve_api_key
 
 
 # ---------------------------------------------------------------------------
@@ -247,10 +250,8 @@ class ComparisonIntelligenceAgent:
         self._temperature  = float(agent_cfg.get("temperature", 0.3))
         self._max_tokens   = int(agent_cfg.get("max_output_tokens", 3072))
 
-        self._api_key = (
-            str(config.get("gemini_api_key", "")).strip()
-            or os.environ.get("GEMINI_API_KEY", "").strip()
-        )
+        # API key — Streamlit Secrets > Env Var > Config
+        self._api_key = resolve_api_key(config, "gemini_api_key", "GEMINI_API_KEY")
 
     # ------------------------------------------------------------------
     # Public API

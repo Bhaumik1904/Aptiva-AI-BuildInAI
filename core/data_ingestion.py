@@ -72,8 +72,7 @@ class DatasetLoader:
         zip_path = self._find_zip()
         if not zip_path:
             status["warnings"].append(
-                "No ZIP file found in data/ directory. "
-                "Please place the hackathon dataset ZIP in d:\\Aptiva AI\\data\\"
+                "Dataset ZIP not found. Running in Demo Mode. Upload your own CSV, Excel, or resumes from the Candidate Sources page."
             )
             return status
 

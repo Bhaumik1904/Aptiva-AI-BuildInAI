@@ -17,6 +17,8 @@ import time
 from pathlib import Path
 from typing import Dict, List, Optional
 
+from core.secrets_utils import resolve_api_key
+
 PRECOMPUTED_PATH = Path("precomputed_reasonings.json")
 
 
@@ -47,7 +49,7 @@ def enrich_reasonings(
         return {}
 
     # Configure API
-    key = api_key or os.environ.get("GEMINI_API_KEY", "")
+    key = api_key or resolve_api_key({}, "gemini_api_key", "GEMINI_API_KEY")
     if not key:
         print("GEMINI_API_KEY not set. Set it as an environment variable.")
         return {}

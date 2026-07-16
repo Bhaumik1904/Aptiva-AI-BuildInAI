@@ -30,6 +30,7 @@ import os
 from typing import Any, Dict, List, Optional
 
 from core.models import HiringProject, JobDescription
+from core.secrets_utils import resolve_api_key
 
 
 # ---------------------------------------------------------------------------
@@ -73,10 +74,8 @@ class RecruiterMemoryAgent:
         self._config   = config
         agent_cfg      = config.get("mem0_agent", {})
 
-        self._api_key  = (
-            str(config.get("mem0_api_key", "")).strip()
-            or os.environ.get("MEM0_API_KEY", "").strip()
-        )
+        # API key — Streamlit Secrets > Env Var > Config
+        self._api_key = resolve_api_key(config, "mem0_api_key", "MEM0_API_KEY")
         self._user_id  = str(agent_cfg.get("default_user_id", _DEFAULT_USER_ID)).strip()
         self._limit    = int(agent_cfg.get("memory_limit", _DEFAULT_MEM_LIMIT))
 
