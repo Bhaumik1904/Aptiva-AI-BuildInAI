@@ -353,6 +353,10 @@ def init_state():
         "recruiter_memories":    [],
         # shortlist: List[ShortlistEntry] — top-N from ShortlistAgent
         "shortlist":             [],
+        # ── Sprint 6B: AI Comparison cache ──────────────────────────────────────
+        # ai_comparison_cache: Dict[cache_key -> ComparisonPayload]
+        # Cached by (cid_a, cid_b, jd_title) — cleared when project changes.
+        "ai_comparison_cache":   {},
     }
     for key, val in defaults.items():
         if key not in st.session_state:

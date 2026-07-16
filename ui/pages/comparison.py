@@ -5,6 +5,7 @@ Side-by-side enterprise comparison of two candidates with winner highlighting.
 
 import streamlit as st
 
+from agents.comparison_agent import ComparisonIntelligenceAgent
 from ui.charts import comparison_radar
 from ui.components import render_hireability_index, render_recommendation_badge
 from ui.styles import page_header, section_label
@@ -167,8 +168,268 @@ def render(state: dict):
         unsafe_allow_html=True,
     )
 
+    # -- AI Comparison Section (Sprint 6B) ------------------------------------
+    st.markdown("---")
+    _render_ai_comparison_section(
+        state        = state,
+        result_a     = result_a,
+        result_b     = result_b,
+        cand_a       = cand_a,
+        cand_b       = cand_b,
+        comp_a       = comp_a,
+        comp_b       = comp_b,
+        label_a      = label_a,
+        label_b      = label_b,
+    )
+
 
 # -- Helper Renders ------------------------------------------------------------
+
+def _render_ai_comparison_section(
+    state:    dict,
+    result_a: dict,
+    result_b: dict,
+    cand_a:   dict,
+    cand_b:   dict,
+    comp_a:   dict,
+    comp_b:   dict,
+    label_a:  str,
+    label_b:  str,
+) -> None:
+    """
+    Render the AI Comparison panel.
+
+    Lazy-loaded: Gemini is called only when the recruiter clicks the button.
+    Results cached in session_state["ai_comparison_cache"] by (cid_a, cid_b, jd_title).
+    Ranking scores are NEVER modified.
+    """
+    config  = state.get("app_config", {})
+    agent   = ComparisonIntelligenceAgent(config)
+
+    cid_a   = cand_a.get("candidate_id", "")
+    cid_b   = cand_b.get("candidate_id", "")
+    ap      = state.get("active_project")
+    jd      = ap.job_description if ap else None
+    jd_key  = jd.title if jd else "default"
+
+    cache_key = f"cmp_{cid_a}_{cid_b}_{jd_key}"
+    cache     = state.get("ai_comparison_cache", {})
+    payload   = cache.get(cache_key)
+
+    section_label("✨ AI COMPARATIVE INTELLIGENCE")
+    st.markdown(
+        '<div style="font-size:0.8125rem;color:#6E6E73;margin-bottom:1rem">'
+        "AI-powered side-by-side evaluation. Ranking order and scores are unchanged. "
+        "Results are cached per candidate pair.</div>",
+        unsafe_allow_html=True,
+    )
+
+    if not agent.is_configured():
+        st.warning(
+            "**Gemini API key not configured.** "
+            "Set `gemini_api_key` in `config.yaml` or export `GEMINI_API_KEY` "
+            "to enable AI Comparison.",
+            icon="⚠️",
+        )
+        return
+
+    if payload:
+        # Already cached — render directly
+        _render_ai_comparison(payload, label_a, label_b)
+        if st.button(
+            "🔄 Regenerate AI Comparison",
+            key="regen_ai_comparison",
+            help="Clear cache and re-generate with Gemini",
+        ):
+            cache.pop(cache_key, None)
+            state["ai_comparison_cache"] = cache
+            st.rerun()
+        return
+
+    # Not cached — show generate button
+    if st.button(
+        "✨ Generate AI Comparison",
+        type="primary",
+        use_container_width=True,
+        key="gen_ai_comparison",
+    ):
+        if not jd:
+            st.error("No active Hiring Project. Select a project to use AI Comparison.")
+            return
+
+        with st.spinner("Generating AI Comparison with Gemini… (~10–30 seconds)"):
+            try:
+                payload = agent.compare(
+                    jd           = jd,
+                    candidate_a  = cand_a,
+                    candidate_b  = cand_b,
+                    components_a = comp_a,
+                    components_b = comp_b,
+                )
+                cache[cache_key]            = payload
+                state["ai_comparison_cache"] = cache
+                st.session_state["ai_comparison_cache"] = cache
+            except RuntimeError as exc:
+                st.error(str(exc))
+                return
+            except ValueError as exc:
+                st.error(f"AI Comparison failed: {exc}")
+                return
+            except Exception as exc:   # noqa: BLE001
+                st.error(f"Unexpected error: {exc}")
+                return
+
+        st.rerun()
+
+
+def _render_ai_comparison(payload: dict, label_a: str, label_b: str) -> None:
+    """Render the full ComparisonPayload in a structured UI layout."""
+
+    # -- Verdict Banner -------------------------------------------------------
+    rec         = payload.get("hiring_recommendation", "Consider Both")
+    rec_cand    = payload.get("recommended_candidate", "Equal")
+    overall     = payload.get("overall_comparison", "")
+    rec_reason  = payload.get("recommendation_reason", "")
+    ev_summary  = payload.get("evidence_summary", "")
+
+    rec_colors  = {
+        "Strong Hire A": ("#EBF5EA", "#1A8917", "1px solid #A8D5A2"),
+        "Hire A":        ("#F0F7FF", "#0071E3", "1px solid #C8DEFF"),
+        "Strong Hire B": ("#EBF5EA", "#1A8917", "1px solid #A8D5A2"),
+        "Hire B":        ("#F0F7FF", "#0071E3", "1px solid #C8DEFF"),
+        "Consider Both": ("#FFF8E6", "#C47000", "1px solid #F5DDA0"),
+        "Neither Recommended": ("#FFF5F5", "#CC0000", "1px solid #F5C0C0"),
+    }
+    bg, clr, border = rec_colors.get(rec, ("#F5F5F7", "#6E6E73", "1px solid #E8E8ED"))
+
+    winner_label = (
+        label_a if rec_cand == "A" else
+        label_b if rec_cand == "B" else
+        "Both candidates equally matched"
+    )
+
+    st.markdown(
+        f'<div style="background:{bg};border:{border};border-radius:12px;'
+        f'padding:1.25rem 1.5rem;margin-bottom:1.25rem;">'
+        f'<div style="font-size:0.75rem;font-weight:600;color:{clr};text-transform:uppercase;'
+        f'letter-spacing:0.08em;margin-bottom:0.4rem">AI Hiring Recommendation</div>'
+        f'<div style="font-size:1.25rem;font-weight:800;color:#1D1D1F;'
+        f'letter-spacing:-0.02em;margin-bottom:0.3rem">{rec}</div>'
+        f'<div style="font-size:0.875rem;color:{clr};font-weight:600;margin-bottom:0.5rem">'
+        f'{winner_label}</div>'
+        f'<div style="font-size:0.875rem;color:#1D1D1F;line-height:1.55">{overall}</div>'
+        f'</div>',
+        unsafe_allow_html=True,
+    )
+
+    # -- Recommendation Reason ------------------------------------------------
+    if rec_reason:
+        st.markdown(
+            f'<div style="font-size:0.875rem;color:#6E6E73;margin-bottom:1rem;'
+            f'padding:0.75rem 1rem;background:#F5F5F7;border-radius:8px;line-height:1.55">'
+            f'<span style="font-weight:600;color:#1D1D1F">Why: </span>{rec_reason}</div>',
+            unsafe_allow_html=True,
+        )
+
+    # -- Strengths Grid -------------------------------------------------------
+    section_label("STRENGTHS ANALYSIS")
+    s_col1, s_col2, s_col3 = st.columns(3)
+
+    shared     = payload.get("shared_strengths",   [])
+    unique_a   = payload.get("unique_strengths_a", [])
+    unique_b   = payload.get("unique_strengths_b", [])
+
+    with s_col1:
+        st.markdown('<div style="font-size:0.75rem;font-weight:700;color:#0071E3;margin-bottom:0.4rem">SHARED STRENGTHS</div>', unsafe_allow_html=True)
+        for s in shared:
+            st.markdown(f'<div style="font-size:0.8125rem;color:#1D1D1F;margin:0.2rem 0;display:flex;gap:0.3rem"><span style="color:#0071E3">●</span><span>{s}</span></div>', unsafe_allow_html=True)
+        if not shared:
+            st.caption("No overlapping strengths identified")
+
+    with s_col2:
+        st.markdown(f'<div style="font-size:0.75rem;font-weight:700;color:#1A8917;margin-bottom:0.4rem">{label_a.upper()} ONLY</div>', unsafe_allow_html=True)
+        for s in unique_a:
+            st.markdown(f'<div style="font-size:0.8125rem;color:#1D1D1F;margin:0.2rem 0;display:flex;gap:0.3rem"><span style="color:#1A8917">✓</span><span>{s}</span></div>', unsafe_allow_html=True)
+        if not unique_a:
+            st.caption("None identified")
+
+    with s_col3:
+        st.markdown(f'<div style="font-size:0.75rem;font-weight:700;color:#C47000;margin-bottom:0.4rem">{label_b.upper()} ONLY</div>', unsafe_allow_html=True)
+        for s in unique_b:
+            st.markdown(f'<div style="font-size:0.8125rem;color:#1D1D1F;margin:0.2rem 0;display:flex;gap:0.3rem"><span style="color:#C47000">✓</span><span>{s}</span></div>', unsafe_allow_html=True)
+        if not unique_b:
+            st.caption("None identified")
+
+    # -- Skill Gaps -----------------------------------------------------------
+    st.markdown("---")
+    section_label("SKILL GAP ANALYSIS")
+    gap_col_a, gap_col_b = st.columns(2)
+
+    _SEV_COLOR = {"Critical": "#CC0000", "Important": "#C47000", "Optional": "#6E6E73"}
+
+    def _render_gaps(gaps: list, label: str):
+        st.markdown(f'<div style="font-size:0.75rem;font-weight:700;color:#1D1D1F;margin-bottom:0.5rem">{label} Skill Gaps</div>', unsafe_allow_html=True)
+        if not gaps:
+            st.markdown('<div style="font-size:0.8125rem;color:#1A8917">&#10003; No critical skill gaps identified</div>', unsafe_allow_html=True)
+            return
+        for gap in gaps:
+            clr = _SEV_COLOR.get(gap["severity"], "#6E6E73")
+            st.markdown(
+                f'<div style="padding:0.4rem 0.6rem;background:#F5F5F7;border-radius:6px;'
+                f'margin:0.25rem 0;border-left:3px solid {clr}">'
+                f'<div style="font-size:0.8125rem;font-weight:600;color:{clr}">{gap["skill"]} '
+                f'<span style="font-weight:400;font-size:0.6875rem">({gap["severity"]})</span></div>'
+                f'<div style="font-size:0.75rem;color:#6E6E73;margin-top:0.2rem">{gap["evidence"]}</div>'
+                f'</div>',
+                unsafe_allow_html=True,
+            )
+
+    with gap_col_a:
+        _render_gaps(payload.get("skill_gaps_a", []), label_a)
+
+    with gap_col_b:
+        _render_gaps(payload.get("skill_gaps_b", []), label_b)
+
+    # -- Experience + Education -----------------------------------------------
+    st.markdown("---")
+    section_label("EXPERIENCE & EDUCATION")
+    ee_col1, ee_col2 = st.columns(2)
+
+    exp_cmp = payload.get("experience_comparison", {})
+    edu_cmp = payload.get("education_comparison", {})
+
+    with ee_col1:
+        st.markdown("**Experience Comparison**")
+        verdict = exp_cmp.get("verdict", "")
+        reason  = exp_cmp.get("reasoning", "")
+        st.markdown(f'<div style="font-size:0.875rem;font-weight:700;color:#0071E3;margin-bottom:0.3rem">{verdict}</div>', unsafe_allow_html=True)
+        st.markdown(f'<div style="font-size:0.8125rem;color:#6E6E73;line-height:1.55">{reason}</div>', unsafe_allow_html=True)
+
+    with ee_col2:
+        st.markdown("**Education Comparison**")
+        va  = edu_cmp.get("verdict_a", "")
+        vb  = edu_cmp.get("verdict_b", "")
+        rea = edu_cmp.get("reasoning", "")
+        st.markdown(
+            f'<div style="font-size:0.8125rem;color:#1D1D1F;margin-bottom:0.25rem">'
+            f'<strong>{label_a}:</strong> {va} &nbsp;|&nbsp; <strong>{label_b}:</strong> {vb}</div>',
+            unsafe_allow_html=True,
+        )
+        st.markdown(f'<div style="font-size:0.8125rem;color:#6E6E73;line-height:1.55">{rea}</div>', unsafe_allow_html=True)
+
+    # -- Evidence Summary -----------------------------------------------------
+    if ev_summary:
+        st.markdown("---")
+        st.markdown(
+            f'<div style="background:#F0F7FF;border:1px solid #C8DEFF;border-radius:10px;'
+            f'padding:1rem 1.25rem;">'
+            f'<div style="font-size:0.75rem;font-weight:700;color:#0071E3;text-transform:uppercase;'
+            f'letter-spacing:0.08em;margin-bottom:0.5rem">📊 Evidence Summary</div>'
+            f'<div style="font-size:0.875rem;color:#1D1D1F;line-height:1.6">{ev_summary}</div>'
+            f'</div>',
+            unsafe_allow_html=True,
+        )
+
 
 def _render_candidate_column(candidate, components, result, hi_score, is_winner: bool):
     profile = candidate.get("profile", {})

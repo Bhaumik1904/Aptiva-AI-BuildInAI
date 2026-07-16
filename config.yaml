@@ -44,6 +44,15 @@ matching_agent:
   temperature: 0.2               # Slightly higher — allows creative interview questions
   max_output_tokens: 3072        # Larger — 9-section InsightsPayload is verbose
 
+# ── Comparative Intelligence Agent (Sprint 6B) ────────────────────────────────
+# Same 3-tier model resolution as other agents.
+# Temperature 0.3 — slightly higher to allow nuanced comparative reasoning.
+comparison_agent:
+  enabled: true
+  model: "gemini-2.5-flash"      # Configurable — change to gemini-2.5-pro for depth
+  temperature: 0.3               # Slightly higher — comparative reasoning benefits from nuance
+  max_output_tokens: 3072        # 12-section ComparisonPayload is verbose
+
 # ── Gemini Settings (only used when enable_reasoning_enrichment: true) ───────
 gemini_model: "gemini-2.5-pro"
 gemini_api_key: ""                   # Or set GEMINI_API_KEY env var
@@ -51,7 +60,7 @@ gemini_api_key: ""                   # Or set GEMINI_API_KEY env var
 # ── Mem0 Settings (Sprint 6A — Recruiter Memory Layer) ───────────────────────
 # Set mem0_api_key or export MEM0_API_KEY env var.
 # If not configured, the app works normally — memory features are silently disabled.
-mem0_api_key: ""                     # Or set MEM0_API_KEY env var
+mem0_api_key: "m0-DrM3efdruBPkKAWmYpMFLsF0J0VElsdwJyASkrHF"                     # Or set MEM0_API_KEY env var
 mem0_agent:
   default_user_id: "aptiva_recruiter" # Per-recruiter ID (change for multi-user)
   memory_limit: 10                    # Max memories returned per recall()
