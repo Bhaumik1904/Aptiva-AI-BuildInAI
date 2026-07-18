@@ -192,7 +192,10 @@ class JDIntelligenceAgent:
             )
 
         # Layer 0: Call Gemini
-        raw_response = self._call_gemini(jd_text.strip())
+        try:
+            raw_response = self._call_gemini(jd_text.strip())
+        except Exception as exc:
+            raise RuntimeError("AI service is temporarily unavailable. Please try again.") from exc
 
         # Layer 1: JSON decode with one retry after stripping markdown fences
         try:
@@ -392,20 +395,19 @@ def _safe_str_list(val: Any) -> List[str]:
 
 
 def _strip_markdown_fences(text: str) -> str:
-    """
-    Remove ```json ... ``` or ``` ... ``` wrappers.
-    Some models include these despite instructions to the contrary.
-    """
-    text = text.strip()
-    if text.startswith("```"):
-        lines = text.splitlines()
-        # Drop first line (``` or ```json)
-        lines = lines[1:]
-        # Drop last line if it is a closing fence
-        if lines and lines[-1].strip() == "```":
-            lines = lines[:-1]
-        text = "\n".join(lines).strip()
-    return text
+    """Extract JSON object from text using robust incremental parsing."""
+    import json
+    
+    decoder = json.JSONDecoder()
+    for i, char in enumerate(text):
+        if char in ('{', '['):
+            try:
+                obj, end_idx = decoder.raw_decode(text[i:])
+                return text[i:i+end_idx]
+            except json.JSONDecodeError:
+                continue
+                
+    raise ValueError("No valid JSON object or array could be found in the AI response.")
 
 
 def _build_steps_log(validated: dict) -> List[str]:
