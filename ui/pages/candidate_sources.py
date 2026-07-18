@@ -502,13 +502,13 @@ def _render_resume_panel(project: HiringProject, state: dict) -> None:
                         "size_str": size_str,
                         "steps":    steps,
                         "error":    None,
-                        "candidate_id": candidate["candidate_id"],
-                        "name":     candidate["profile"]["anonymized_name"],
-                        "yoe":      candidate["profile"]["years_of_experience"],
-                        "n_skills": len(candidate["skills"]),
-                        "n_certs":  len(candidate["certifications"]),
+                        "candidate_id": candidate.get("candidate_id"),
+                        "name":     candidate.get("profile", {}).get("anonymized_name"),
+                        "yoe":      candidate.get("profile", {}).get("years_of_experience"),
+                        "n_skills": len(candidate.get("skills", [])),
+                        "n_certs":  len(candidate.get("certifications", [])),
                     })
-                except (ValueError, RuntimeError, Exception) as exc:  # noqa: BLE001
+                except Exception as exc:  # noqa: BLE001
                     new_file_infos.append({
                         "filename": filename,
                         "size_str": size_str,
@@ -600,6 +600,180 @@ def _render_resume_panel(project: HiringProject, state: dict) -> None:
 # ---------------------------------------------------------------------------
 # Main render
 # ---------------------------------------------------------------------------
+
+
+def _render_zip_panel(project: HiringProject, state: dict) -> None:
+    st.markdown("### ZIP Archive Upload")
+    st.markdown("Upload a ZIP file containing PDF or DOCX resumes.")
+    
+    config = state.get("app_config", {})
+    agent = ResumeIntelligenceAgent(config)
+    
+    if not agent.is_configured():
+        st.error("⚠️ **Gemini API Key missing.** Configure it in Settings to enable resume parsing.")
+        return
+        
+    uploaded_file = st.file_uploader(
+        "Upload a ZIP archive",
+        type=["zip"],
+        accept_multiple_files=False,
+        key="zip_upload"
+    )
+    
+    if uploaded_file:
+        from core.zip_loader import extract_resumes_from_zip
+        from collections import Counter
+        
+        st.markdown("#### Processing Archive...")
+        
+        with st.spinner("Extracting files..."):
+            zip_bytes = uploaded_file.getvalue()
+            successful_files, skipped_files = extract_resumes_from_zip(zip_bytes)
+            
+        total_discovered = len(successful_files) + len(skipped_files)
+        
+        if total_discovered == 0:
+            st.warning("No supported files (PDF, DOCX) found in the archive.")
+            return
+            
+        progress_text = st.empty()
+        progress_bar = st.progress(0)
+        
+        new_candidates = []
+        new_file_infos = []
+        successful_count = 0
+        all_skills = []
+        all_yoe = []
+        
+        for idx, (file_bytes, filename, relative_path) in enumerate(successful_files):
+            progress = (idx) / len(successful_files)
+            progress_bar.progress(progress)
+            progress_text.text(f"Analyzing {idx+1}/{len(successful_files)}: {filename}")
+            
+            size_kb = len(file_bytes) / 1024
+            size_str = f"{size_kb:.1f} KB" if size_kb < 1024 else f"{size_kb/1024:.2f} MB"
+            
+            try:
+                candidate, steps = agent.analyze(file_bytes, filename)
+                new_candidates.append(candidate)
+                new_file_infos.append({
+                    "filename": relative_path,
+                    "size_str": size_str,
+                    "steps":    steps,
+                    "error":    None,
+                    "candidate_id": candidate.get("candidate_id"),
+                    "name":     candidate.get("profile", {}).get("anonymized_name"),
+                    "yoe":      candidate.get("profile", {}).get("years_of_experience"),
+                    "n_skills": len(candidate.get("skills", [])),
+                    "n_certs":  len(candidate.get("certifications", [])),
+                })
+                successful_count += 1
+                all_skills.extend(candidate.get("skills", []))
+                yoe = candidate.get("profile", {}).get("years_of_experience")
+                if yoe is not None and isinstance(yoe, (int, float)):
+                    all_yoe.append(yoe)
+            except Exception as exc:
+                new_file_infos.append({
+                    "filename": relative_path,
+                    "size_str": size_str,
+                    "steps":    [],
+                    "error":    str(exc),
+                    "candidate_id": None,
+                    "name":     None,
+                    "yoe":      None,
+                    "n_skills": 0,
+                    "n_certs":  0,
+                })
+                skipped_files.append((relative_path, str(exc)))
+                
+        progress_text.empty()
+        progress_bar.empty()
+
+        project.resume_candidates = new_candidates
+        project.resume_file_infos = new_file_infos
+        
+        top_skills = [s for s, c in Counter(all_skills).most_common(5)]
+        avg_yoe = round(sum(all_yoe) / len(all_yoe), 1) if all_yoe else 0
+        
+        setattr(project, "zip_ingestion_summary", {
+            "total_discovered": total_discovered,
+            "processed_successfully": successful_count,
+            "skipped": len(skipped_files),
+            "skipped_details": skipped_files,
+            "top_skills": top_skills,
+            "avg_experience": avg_yoe
+        })
+
+        # Reset ranking so new candidates will be re-ranked
+        state["ranking_done"] = False
+        state["results"]      = []
+
+    # -- Display ZIP Summary ---------------------------------------------------
+    summary = getattr(project, "zip_ingestion_summary", None)
+    if summary:
+        skipped_html = ""
+        if summary["skipped"] > 0:
+            reasons_html = "".join([f"<li><code>{f[0]}</code>: {f[1]}</li>" for f in summary["skipped_details"][:10]])
+            more_html = f"<li>... and {summary['skipped'] - 10} more</li>" if summary["skipped"] > 10 else ""
+            skipped_html = f'''
+            <div style="margin-top:0.75rem;font-size:0.75rem;color:#CC0000;background:#FFF5F5;border:1px solid #F5C0C0;border-radius:6px;padding:0.625rem">
+              <strong style="display:block;margin-bottom:0.25rem">⚠ {summary["skipped"]} file(s) skipped:</strong>
+              <ul style="margin:0 0 0 1rem;padding:0">{reasons_html}{more_html}</ul>
+            </div>
+            '''
+        
+        st.markdown(
+            f'''
+            <div style="background:#F0F7FF;border:1px solid #C8DEFF;border-radius:8px;padding:1rem 1.25rem;margin-top:0.75rem;">
+                <div style="font-size:0.875rem;font-weight:700;color:#0071E3;margin-bottom:0.75rem;display:flex;align-items:center;gap:0.3rem">
+                  <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="20" height="14" rx="2" ry="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
+                  ZIP Upload Summary
+                </div>
+                <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:0.625rem;margin-bottom:0.625rem">
+                    <div style="background:#fff;border-radius:6px;padding:0.625rem 0.75rem;border:1px solid #E8E8ED">
+                      <div style="font-size:0.625rem;color:#86868B;text-transform:uppercase;letter-spacing:0.06em;margin-bottom:0.2rem">Files Discovered</div>
+                      <div style="font-size:1.1rem;font-weight:700;color:#1D1D1F">{summary["total_discovered"]}</div>
+                    </div>
+                    <div style="background:#fff;border-radius:6px;padding:0.625rem 0.75rem;border:1px solid #E8E8ED">
+                      <div style="font-size:0.625rem;color:#86868B;text-transform:uppercase;letter-spacing:0.06em;margin-bottom:0.2rem">Processed</div>
+                      <div style="font-size:1.1rem;font-weight:700;color:#1A8917">{summary["processed_successfully"]}</div>
+                    </div>
+                    <div style="background:#fff;border-radius:6px;padding:0.625rem 0.75rem;border:1px solid #E8E8ED">
+                      <div style="font-size:0.625rem;color:#86868B;text-transform:uppercase;letter-spacing:0.06em;margin-bottom:0.2rem">Skipped</div>
+                      <div style="font-size:1.1rem;font-weight:700;color:{'#CC0000' if summary['skipped'] > 0 else '#1D1D1F'}">{summary["skipped"]}</div>
+                    </div>
+                </div>
+                <div style="display:grid;grid-template-columns:1fr 1fr;gap:0.625rem">
+                    <div style="background:#fff;border-radius:6px;padding:0.625rem 0.75rem;border:1px solid #E8E8ED">
+                      <div style="font-size:0.625rem;color:#86868B;text-transform:uppercase;letter-spacing:0.06em;margin-bottom:0.2rem">Top Detected Skills</div>
+                      <div style="font-size:0.8125rem;color:#1D1D1F;font-weight:500">{', '.join(summary["top_skills"]) if summary["top_skills"] else 'None'}</div>
+                    </div>
+                    <div style="background:#fff;border-radius:6px;padding:0.625rem 0.75rem;border:1px solid #E8E8ED">
+                      <div style="font-size:0.625rem;color:#86868B;text-transform:uppercase;letter-spacing:0.06em;margin-bottom:0.2rem">Average Experience</div>
+                      <div style="font-size:0.8125rem;color:#1D1D1F;font-weight:500">{summary["avg_experience"]} years</div>
+                    </div>
+                </div>
+                {skipped_html}
+            </div>
+            ''',
+            unsafe_allow_html=True
+        )
+
+    # -- Total candidates bar --------------------------------------------------
+    total = len(project.resume_candidates or [])
+    if total > 0:
+        st.markdown(
+            f'<div style="background:#EBF5EA;border:1px solid #A8D5A2;'
+            f'border-radius:8px;padding:0.75rem 1.25rem;margin-top:0.75rem;'
+            f'font-size:0.8125rem;color:#1A8917;font-weight:600">'
+            f'✓ {total} candidate profile{"s" if total != 1 else ""} ready for ranking.'
+            f'<span style="color:#6E6E73;font-weight:400"> '
+            f'Click <strong>&#9654; Run Ranking Analysis</strong> in the sidebar.</span>'
+            f'</div>',
+            unsafe_allow_html=True,
+        )
+
+
 
 def render(state: dict):
     """Render the Candidate Sources management page."""
@@ -753,19 +927,25 @@ def render(state: dict):
             _render_resume_panel(project, state)
 
     with col4:
-        _source_card(
+        zip_clicked = _source_card(
             emoji="&#128230;",
             title="ZIP Upload",
             description=(
                 "Upload a ZIP archive containing multiple resumes. "
                 "Bulk processing with automatic extraction and parsing."
             ),
-            status="Coming in Sprint 6",
-            status_color="grey",
+            status="Available",
+            status_color="green",
             card_key="zip",
-            is_selected=False,
-            disabled=True,
+            is_selected=(current_source == "zip"),
+            disabled=False,
         )
+        if zip_clicked:
+            _set_source(project, "zip", state)
+            st.rerun()
+
+        if current_source == "zip":
+            _render_zip_panel(project, state)
 
     # -- Contextual hint when demo is active ---------------------------------
     if current_source == "demo":
