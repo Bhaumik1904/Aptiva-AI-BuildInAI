@@ -59,24 +59,16 @@ def setup_dataset() -> DatasetLoader:
 
 # ── Ranking Pipeline ──────────────────────────────────────────────────────────
 @st.cache_data(show_spinner=False)
-def run_ranking(candidates_path_str: str, jd_dict_key: str = "default", top_n: int = 100) -> dict:
+def run_ranking(candidates_path_str: str, jd_dict: dict, top_n: int = 100) -> dict:
     """
-    Run the full ranking pipeline. Cached per (candidates_path, jd_dict_key).
+    Run the full ranking pipeline. Cached per (candidates_path, jd_dict).
     Returns: {"results": [...], "total": int, "submission_csv": str}
-
-    jd_dict_key is a hashable cache key derived from the active JD so that
-    changing the JD triggers a fresh ranking run without clearing the entire cache.
-    The actual JD dict is pulled from session state inside the function.
     """
     import heapq
     from pathlib import Path
 
     loader = DatasetLoader(data_dir="./data")
     target_path = Path(candidates_path_str)
-
-    # Resolve active JD from session state (not passed directly — keeps cache key small)
-    active_project: HiringProject = st.session_state.get("active_project")
-    jd_dict = active_project.job_description.to_dict() if active_project else JD_CONFIG
 
     candidates = loader.load_all_candidates(target_path)
     if not candidates:
@@ -93,7 +85,6 @@ def run_ranking(candidates_path_str: str, jd_dict_key: str = "default", top_n: i
         scored.append((final_score, candidate, components))
 
     # Top-N
-    import heapq
     top_results = heapq.nlargest(top_n, scored, key=lambda x: x[0])
     top_results.sort(key=lambda x: (-x[0], x[1].get("candidate_id", "")))
 
@@ -436,7 +427,7 @@ def render_sidebar(config: dict, loader: DatasetLoader):
             and bool(getattr(_ap_sb, "csv_file_bytes", None))
         )
         _resume_rdy = (
-            _src_sb == "resume"
+            _src_sb in ("resume", "zip")
             and _ap_sb is not None
             and bool(getattr(_ap_sb, "resume_candidates", None))
         )
@@ -581,7 +572,7 @@ def auto_run_ranking(loader: DatasetLoader):
     # ── Sprint 5A: dispatch to Resume path ───────────────────────────────
     active_project: HiringProject = st.session_state.get("active_project")
     source = active_project.candidate_source if active_project else "demo"
-    if source == "resume":
+    if source in ("resume", "zip"):
         _run_resume_ranking(active_project)
         return
 
@@ -848,7 +839,8 @@ def auto_run_ranking(loader: DatasetLoader):
     # ── blocking ranking call ─────────────────────────────────────────────
     result_data = None
     try:
-        result_data = run_ranking(str(candidates_path))
+        jd_dict = active_project.job_description.to_dict() if active_project else JD_CONFIG
+        result_data = run_ranking(str(candidates_path), jd_dict=jd_dict)
     except Exception as exc:
         # ── Error state: show clean failure overlay ───────────────────────
         error_html = f"""{_CSS}
