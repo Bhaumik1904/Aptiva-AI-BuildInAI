@@ -29,3 +29,38 @@ env/
 .Trashes
 ehthumbs.db
 Thumbs.db
+.streamlit/secrets.toml
+# Secrets
+.streamlit/secrets.toml
+.env
+
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+
+# Virtual environments
+venv/
+.venv/
+env/
+
+# Temporary files
+recovered*.txt
+*.tmp
+*.bak
+*.log
+
+# Large datasets
+data/*.jsonl
+data/*.jsonl.gz
+data/*.zip
+data/*.csv
+
+# Generated submissions
+submission.csv
+submission.xlsx
+
+# OS
+.DS_Store
+Thumbs.db
