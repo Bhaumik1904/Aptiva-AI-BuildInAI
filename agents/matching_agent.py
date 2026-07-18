@@ -548,12 +548,19 @@ class CandidateIntelligenceAgent:
 # ---------------------------------------------------------------------------
 
 def _strip_markdown_fences(text: str) -> str:
-    """Remove ```json ... ``` or ``` ... ``` wrappers from Gemini output."""
-    text = text.strip()
-    if text.startswith("```"):
-        lines = text.splitlines()
-        lines = lines[1:]
-        if lines and lines[-1].strip() == "```":
-            lines = lines[:-1]
-        text = "\n".join(lines).strip()
-    return text
+    """Extract JSON object from text using robust incremental parsing."""
+    import json
+    
+    decoder = json.JSONDecoder()
+    for i, char in enumerate(text):
+        if char in ('{', '['):
+            try:
+                # raw_decode parses a valid JSON document starting at index i
+                # and returns the parsed object + the end index.
+                obj, end_idx = decoder.raw_decode(text[i:])
+                return text[i:i+end_idx]
+            except json.JSONDecodeError:
+                # If decoding fails, this brace was just part of the text. Keep scanning.
+                continue
+                
+    raise ValueError("No valid JSON object or array could be found in the AI response.")
