@@ -6,6 +6,7 @@ Full profile card, career timeline, skill list, education, and all signals.
 import streamlit as st
 
 from agents.matching_agent import CandidateIntelligenceAgent
+from ui.voice_card import render_voice_card
 from core.reasoning import generate_ai_insights, generate_reasoning
 from core.skill_gap import analyze_skill_gap
 from ui.charts import behavioral_radar, skill_match_chart
@@ -31,7 +32,7 @@ def render(state: dict):
         return
 
     candidate_options = {
-        f"#{r['rank']} · {r['candidate']['candidate_id']} · {r['candidate']['profile'].get('current_title', '')[:30]}": r["candidate"]["candidate_id"]
+        f"#{r['rank']} · {r['candidate']['candidate_id']} · {r['candidate'].get('profile', {}).get('current_title', '')[:30]}": r["candidate"]["candidate_id"]
         for r in results
     }
 
@@ -71,12 +72,15 @@ def render(state: dict):
 
     render_profile_header(candidate, components, rank)
 
+    # ── Voice AI Panel — first-class, always visible ───────────────────────
+    _render_voice_ai_panel(candidate, components, state)
+
     st.markdown("<br>", unsafe_allow_html=True)
 
     # -- Tabs --------------------------------------------------------------
     tab_overview, tab_career, tab_skills, tab_signals, tab_reasoning, tab_ai = st.tabs([
         "Overview", "Career History", "Skills & Gap",
-        "Behavioral Signals", "AI Reasoning", "\u2728 AI Insights"
+        "Behavioral Signals", "AI Reasoning", "✨ AI Insights"
     ])
 
     # -- TAB 1: Overview ---------------------------------------------------
@@ -227,6 +231,65 @@ def render(state: dict):
         _render_ai_insights_tab(candidate, components, state)
 
 
+# -- Voice AI Panel — first-class feature, always rendered above tabs ----------
+
+def _render_voice_ai_panel(
+    candidate:        dict,
+    score_components: dict,
+    state:            dict,
+) -> None:
+    """
+    Premium Voice AI card placed immediately after the profile header.
+    Always visible. Auto-generates AI Insights if not cached before narrating.
+    Uses render_voice_card() for status, progress, audio player, and cache UX.
+    """
+    from services.gnani_service import GnaniService
+    config = state.get("app_config", {})
+    gnani  = GnaniService(config)
+    cid    = candidate.get("candidate_id", "unknown")
+
+    def _generate() -> tuple:
+        """Generate AI Insights (if needed) then synthesize speech."""
+        cache_key     = f"ai_insights_{cid}"
+        ai_was_cached = (
+            cache_key in st.session_state
+            and st.session_state[cache_key].get("ok")
+        )
+
+        with st.status("🧠 Preparing AI summary...", expanded=True) as status:
+            cached = st.session_state.get(cache_key, {})
+            if not cached.get("ok"):
+                active_project = state.get("active_project")
+                if active_project is None:
+                    raise RuntimeError(
+                        "No active Hiring Project. Set one in the Hiring Projects page."
+                    )
+                jd    = active_project.job_description
+                agent = CandidateIntelligenceAgent(config)
+                if not agent.is_configured():
+                    raise RuntimeError("Gemini API key not configured.")
+                payload = agent.analyze(jd, candidate, score_components)
+                st.session_state[cache_key] = {"ok": True, "payload": payload}
+                cached = st.session_state[cache_key]
+            else:
+                st.write("⚡ Using cached AI Insights.")
+
+            status.update(label="🎤 Synthesizing speech...", state="running")
+            payload     = cached.get("payload", {})
+            audio_bytes = gnani.candidate_brief(candidate, payload)
+            status.update(label="✅ Done", state="complete", expanded=False)
+
+        return audio_bytes, ai_was_cached
+
+    render_voice_card(
+        button_label  = "🎧 Recruiter Brief",
+        button_key    = f"voice_brief_{cid}",
+        subtitle      = "Generate a spoken candidate summary for this profile.",
+        gnani_enabled = gnani.enabled,
+        on_generate   = _generate,
+    )
+
+
 # -- AI Insights Tab Logic -------------------------------------------------------
 
 _REC_CONFIG = {
@@ -309,7 +372,7 @@ def _render_ai_insights_tab(
             try:
                 payload = agent.analyze(jd, candidate, score_components)
                 st.session_state[cache_key] = {"ok": True, "payload": payload}
-            except (ValueError, RuntimeError, Exception) as exc:  # noqa: BLE001
+            except Exception as exc:  # noqa: BLE001
                 st.session_state[cache_key] = {"ok": False, "error": str(exc)}
 
         status_slot.empty()
@@ -362,6 +425,8 @@ def _render_ai_insights_panel(payload: dict, candidate: dict) -> None:
         f'</div>',
         unsafe_allow_html=True,
     )
+
+    # Voice brief is now handled by _render_voice_ai_panel() above the tabs.
 
     # Match summary
     summary = payload.get("match_summary", "")
