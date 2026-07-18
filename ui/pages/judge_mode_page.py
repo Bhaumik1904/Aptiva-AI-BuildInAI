@@ -22,7 +22,7 @@ def render(state: dict):
     # -- Candidate Selection -----------------------------------------------
     results = state.get("results", [])
     candidate_options = {
-        f"#{r['rank']} · {r['candidate']['candidate_id']} · {r['candidate']['profile'].get('current_title','')[:30]}": r["candidate"]["candidate_id"]
+        f"#{r['rank']} · {r['candidate']['candidate_id']} · {r['candidate'].get('profile', {}).get('current_title','')[:30]}": r["candidate"]["candidate_id"]
         for r in results
     }
     
