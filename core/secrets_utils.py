@@ -24,6 +24,7 @@ def resolve_api_key(config: Dict[str, Any], config_key: str, env_key: str) -> st
         if env_key in st.secrets:
             return str(st.secrets[env_key]).strip()
     except Exception:
+        # Streamlit may not be initialized during CLI execution
         pass
         
     # 2. Environment Variables
