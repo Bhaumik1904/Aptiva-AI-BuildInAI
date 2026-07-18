@@ -8,6 +8,7 @@ import pandas as pd
 import streamlit as st
 
 from agents.shortlist_agent import ShortlistAgent
+from ui.voice_card import render_voice_card
 from ui.components import (
     recommendation_badge,
     render_empty_state,
@@ -57,6 +58,9 @@ def render(state: dict):
 
     st.markdown("---")
 
+    # ── Voice AI Section — first-class, always visible ──────────────────────
+    _render_voice_ai_section(results, state)
+
     # -- AI Shortlist Panel (Sprint 6A) ----------------------------------------
     shortlist = state.get("shortlist", [])
     if shortlist:
@@ -71,6 +75,27 @@ def render(state: dict):
 
     # ── Filters Row ───────────────────────────────────────────────────────
     with st.expander("Filters & Search", expanded=False):
+        # Voice Search — always visible; disabled with caption when voice is not configured
+        voice_search_text = ""
+        from services.gnani_service import GnaniService
+        config = state.get("app_config", {})
+        gnani = GnaniService(config)
+        if gnani.enabled:
+            audio_data = None
+            if hasattr(st, "audio_input"):
+                audio_data = st.audio_input("🎤 Voice Search")
+            else:
+                audio_data = st.file_uploader("🎤 Upload Voice Search (wav, mp3)", type=["wav", "mp3", "m4a"])
+
+            if audio_data:
+                with st.spinner("Transcribing..."):
+                    voice_search_text = gnani.transcribe(audio_data.getvalue())
+                if voice_search_text:
+                    st.success(f'Found: "{voice_search_text}"')
+        else:
+            st.file_uploader("🎤 Voice Search", type=["wav", "mp3", "m4a"], disabled=True)
+            st.caption("Configure your Gnani API key to enable voice search.")
+
         fcol1, fcol2, fcol3, fcol4 = st.columns(4)
         with fcol1:
             # Issue #4: filter on Final Score (ranking metric), not Hireability Index.
@@ -80,7 +105,7 @@ def render(state: dict):
         with fcol2:
             yoe_range = st.slider("Years of Experience", 0, 20, (0, 20))
         with fcol3:
-            title_filter = st.text_input("Title contains", placeholder="e.g. ML, NLP...")
+            title_filter = st.text_input("Title contains", value=voice_search_text if voice_search_text else "", placeholder="e.g. ML, NLP...")
         with fcol4:
             location_filter = st.text_input("Location contains", placeholder="e.g. Bangalore...")
 
@@ -239,6 +264,54 @@ def render(state: dict):
         )
 
 
+
+# -- Voice AI Section -- first-class feature, always rendered above filters ----
+
+def _render_voice_ai_section(results: list, state: dict) -> None:
+    """
+    Premium Voice AI card placed immediately after the stats bar.
+    Always visible once rankings are run.
+    Uses render_voice_card() for consistent UX: status, progress, audio, cache.
+    """
+    from services.gnani_service import GnaniService
+    config = state.get("app_config", {})
+    gnani  = GnaniService(config)
+
+    def _generate() -> tuple:
+        """Auto-build shortlist if needed, then narrate it."""
+        shortlist = state.get("shortlist", [])
+        sl_was_cached = bool(shortlist)
+
+        with st.status("🧠 Preparing shortlist summary...", expanded=True) as status:
+            if not shortlist:
+                ap       = state.get("active_project")
+                jd       = ap.job_description if ap else None
+                memories = state.get("recruiter_memories", [])
+                agent    = ShortlistAgent()
+                shortlist = agent.generate(results, jd, memories)
+                state["shortlist"] = shortlist
+                st.session_state["shortlist"] = shortlist
+            else:
+                st.write("⚡ Using cached shortlist.")
+
+            if not shortlist:
+                raise RuntimeError("Could not build a shortlist to narrate.")
+
+            status.update(label="🎤 Synthesizing speech...", state="running")
+            audio_bytes = gnani.shortlist_brief(shortlist)
+            status.update(label="✅ Done", state="complete", expanded=False)
+
+        return audio_bytes, sl_was_cached
+
+    render_voice_card(
+        button_label  = "🎧 Play Shortlist Brief",
+        button_key    = "voice_shortlist_brief",
+        subtitle      = "Generate a spoken summary of the top-ranked candidates.",
+        gnani_enabled = gnani.enabled,
+        on_generate   = _generate,
+    )
+
+
 # -- Sprint 6A: AI Shortlist + Recruiter Insights helpers ----------------------
 
 _REC_COLORS = {
@@ -258,6 +331,8 @@ def _render_shortlist_panel(shortlist: list, state: dict) -> None:
         "Ranking order and scores are unchanged.</div>",
         unsafe_allow_html=True,
     )
+
+    # Voice brief is now handled by _render_voice_ai_section() above.
 
     cols = st.columns(len(shortlist), gap="small")
 
