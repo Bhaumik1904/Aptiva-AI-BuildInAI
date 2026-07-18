@@ -535,6 +535,31 @@ The ranker is **never dependent on Gemini.** This is a post-processing quality s
 
 ---
 
+## Keploy AI Egress Testing
+
+We use **Keploy** to automatically record and replay our AI provider interactions (Gemini, Mem0, and Gnani).
+
+### Why Keploy?
+Aptiva AI is a Streamlit monolith heavily dependent on external, costly, and rate-limited AI APIs. Instead of creating fake internal REST endpoints or mutating our UI architecture, Keploy acts as a transparent network proxy for our outbound traffic.
+
+It records real API responses and replays them instantly during tests. This allows us to group our core logic into robust workflow tests.
+
+*Note on testing failures: To test error handling (e.g. Gemini Quota Exhaustion), the failure must first be encountered and recorded by Keploy during Record Mode. Keploy does not generate fake failure states; it precisely replays whatever was recorded.*
+
+This enables **deterministic regression testing** of our complex agent logic, JSON parsing, and graceful fallbacks without consuming API quota or requiring internet access during replay.
+
+### How to Run
+1. **Record new AI interactions**: 
+   ```bash
+   keploy record -c "pytest tests/test_ai_workflows.py"
+   ```
+2. **Replay tests (Zero API cost)**: 
+   ```bash
+   keploy test -c "pytest tests/test_ai_workflows.py"
+   ```
+
+---
+
 ## Future Roadmap
 
 The current architecture is optimized for the hackathon's strict compute constraints (≤5 minutes, CPU-only, no network). The following enhancements are designed and ready for implementation given cloud infrastructure:
