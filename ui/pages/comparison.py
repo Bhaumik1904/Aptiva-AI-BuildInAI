@@ -6,6 +6,7 @@ Side-by-side enterprise comparison of two candidates with winner highlighting.
 import streamlit as st
 
 from agents.comparison_agent import ComparisonIntelligenceAgent
+from ui.voice_card import render_voice_card
 from ui.charts import comparison_radar
 from ui.components import render_hireability_index, render_recommendation_badge
 from ui.styles import page_header, section_label
@@ -27,7 +28,7 @@ def render(state: dict):
     compare_list = state.get("compare_list", [])
 
     options = {
-        f"#{r['rank']} · {r['candidate']['candidate_id']} · {r['candidate']['profile'].get('current_title','')[:30]}": r["candidate"]["candidate_id"]
+        f"#{r['rank']} · {r['candidate']['candidate_id']} · {r['candidate'].get('profile', {}).get('current_title','')[:30]}": r["candidate"]["candidate_id"]
         for r in results
     }
 
@@ -71,6 +72,17 @@ def render(state: dict):
     # -- MASTER SCORE: Final Score is the single source of truth for ranking --
     # Hireability Index is an explainability metric only — never a decision key.
     winner_is_a = result_a["score"] >= result_b["score"]
+
+    st.markdown("---")
+
+    # -- Voice AI Panel -- first-class, always visible ----------------------
+    _render_voice_ai_panel(
+        cand_a=cand_a, cand_b=cand_b,
+        comp_a=comp_a, comp_b=comp_b,
+        result_a=result_a, result_b=result_b,
+        cid_a=cid_a, cid_b=cid_b,
+        state=state,
+    )
 
     st.markdown("---")
 
@@ -183,6 +195,74 @@ def render(state: dict):
     )
 
 
+
+# -- Voice AI Panel -- first-class feature, always rendered above charts ------
+
+def _render_voice_ai_panel(
+    cand_a:   dict,
+    cand_b:   dict,
+    comp_a:   dict,
+    comp_b:   dict,
+    result_a: dict,
+    result_b: dict,
+    cid_a:    str,
+    cid_b:    str,
+    state:    dict,
+) -> None:
+    """
+    Premium Voice AI card placed after candidate selection.
+    Always visible. Auto-generates AI Comparison if not cached before narrating.
+    Uses render_voice_card() for consistent UX: status, progress, audio, cache.
+    """
+    from services.gnani_service import GnaniService
+    config = state.get("app_config", {})
+    gnani  = GnaniService(config)
+
+    def _generate() -> tuple:
+        """Generate AI Comparison (if needed) then synthesize speech."""
+        ap        = state.get("active_project")
+        jd        = ap.job_description if ap else None
+        jd_key    = jd.title if jd else "default"
+        cache_key = f"cmp_{cid_a}_{cid_b}_{jd_key}"
+        cache     = state.get("ai_comparison_cache", {})
+        payload   = cache.get(cache_key)
+        ai_was_cached = payload is not None
+
+        with st.status("🧠 Preparing AI comparison...", expanded=True) as status:
+            if not payload:
+                if not jd:
+                    raise RuntimeError("No active Hiring Project. Set one in the Hiring Projects page.")
+                agent = ComparisonIntelligenceAgent(config)
+                if not agent.is_configured():
+                    raise RuntimeError("Gemini API key not configured.")
+                payload = agent.compare(
+                    jd=jd,
+                    candidate_a=cand_a,
+                    candidate_b=cand_b,
+                    components_a=comp_a,
+                    components_b=comp_b,
+                )
+                cache[cache_key] = payload
+                state["ai_comparison_cache"] = cache
+                st.session_state["ai_comparison_cache"] = cache
+            else:
+                st.write("⚡ Using cached AI comparison.")
+
+            status.update(label="🎤 Synthesizing speech...", state="running")
+            audio_bytes = gnani.comparison_brief(cand_a, cand_b, payload)
+            status.update(label="✅ Done", state="complete", expanded=False)
+
+        return audio_bytes, ai_was_cached
+
+    render_voice_card(
+        button_label  = "🎧 Listen to Comparison",
+        button_key    = f"voice_cmp_{cid_a}_{cid_b}",
+        subtitle      = "Generate a spoken side-by-side comparison of these two candidates.",
+        gnani_enabled = gnani.enabled,
+        on_generate   = _generate,
+    )
+
+
 # -- Helper Renders ------------------------------------------------------------
 
 def _render_ai_comparison_section(
@@ -236,6 +316,8 @@ def _render_ai_comparison_section(
     if payload:
         # Already cached — render directly
         _render_ai_comparison(payload, label_a, label_b)
+        # Voice narration is handled by _render_voice_ai_panel() above.
+
         if st.button(
             "🔄 Regenerate AI Comparison",
             key="regen_ai_comparison",
