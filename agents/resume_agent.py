@@ -220,7 +220,10 @@ class ResumeIntelligenceAgent:
             )
 
         # Call Gemini
-        raw_response = self._call_gemini(resume_text.strip())
+        try:
+            raw_response = self._call_gemini(resume_text.strip())
+        except Exception as exc:
+            raise RuntimeError("AI service is temporarily unavailable. Please try again.") from exc
 
         # Parse with retry
         try:
@@ -271,7 +274,7 @@ class ResumeIntelligenceAgent:
                     "steps":     steps,
                     "error":     None,
                 })
-            except (ValueError, RuntimeError, Exception) as exc:  # noqa: BLE001
+            except Exception as exc:  # noqa: BLE001
                 results.append({
                     "filename":  filename,
                     "candidate": None,
@@ -651,12 +654,16 @@ def _safe_str_list(val: Any) -> List[str]:
 
 
 def _strip_markdown_fences(text: str) -> str:
-    """Strip ```json ... ``` or ``` ... ``` wrappers from Gemini output."""
-    text = text.strip()
-    if text.startswith("```"):
-        lines = text.splitlines()
-        lines = lines[1:]
-        if lines and lines[-1].strip() == "```":
-            lines = lines[:-1]
-        text = "\n".join(lines).strip()
-    return text
+    """Extract JSON object from text using robust incremental parsing."""
+    import json
+    
+    decoder = json.JSONDecoder()
+    for i, char in enumerate(text):
+        if char in ('{', '['):
+            try:
+                obj, end_idx = decoder.raw_decode(text[i:])
+                return text[i:i+end_idx]
+            except json.JSONDecodeError:
+                continue
+                
+    raise ValueError("No valid JSON object or array could be found in the AI response.")
