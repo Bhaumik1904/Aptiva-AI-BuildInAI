@@ -31,7 +31,7 @@ from core.jd_config import JD_CONFIG
 from core.similarity import build_tfidf_index
 from core.csv_loader import CSVLoader, ExcelLoader
 from ui.styles import inject_styles
-from ui.pages import home, ai_analysis, candidate_profile, comparison, judge_mode_page, analytics
+from ui.pages import home, ai_analysis, candidate_profile, comparison, judge_mode_page, analytics, interview
 from ui.pages import projects as projects_page
 from ui.pages import candidate_sources as candidate_sources_page
 # ── Sprint 6A: Memory + Shortlist agents ───────────────────────────────────────
@@ -379,6 +379,7 @@ def render_sidebar(config: dict, loader: DatasetLoader):
             "judge_mode": '<svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m14 13-7.5 7.5c-.83.83-2.17.83-3 0 0 0 0 0 0 0a2.12 2.12 0 0 1 0-3L11 10"/><path d="m16 16 6-6"/><path d="m8 8 6-6"/><path d="m9 7 8 8"/><path d="m21 11-8-8"/></svg>',
             "analytics": '<svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="18" y="3" width="4" height="18"/><rect x="10" y="8" width="4" height="13"/><rect x="2" y="13" width="4" height="8"/></svg>',
             "candidate_sources": '<svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M3 5v14c0 1.66 4.03 3 9 3s9-1.34 9-3V5"/><path d="M3 12c0 1.66 4.03 3 9 3s9-1.34 9-3"/></svg>',
+            "interview": '<svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2v20"/><path d="M2 12h20"/><circle cx="12" cy="12" r="3"/></svg>',
         }
 
         pages = [
@@ -391,6 +392,9 @@ def render_sidebar(config: dict, loader: DatasetLoader):
             ("judge_mode",         "Judge Mode"),
             ("analytics",          "Analytics"),
         ]
+        # Show Interview Kit only after one has been generated
+        if "current_interview_kit" in st.session_state:
+            pages.insert(5, ("interview", "Interview Kit"))
 
         st.markdown('<div style="font-size:0.6875rem;font-weight:600;color:#86868B;text-transform:uppercase;letter-spacing:0.1em;margin-bottom:0.5rem">Navigation</div>', unsafe_allow_html=True)
 

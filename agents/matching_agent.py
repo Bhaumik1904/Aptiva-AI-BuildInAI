@@ -159,7 +159,8 @@ def _build_prompt(
         "INSTRUCTIONS\n"
         "- Output a single valid JSON object matching the schema below exactly.\n"
         "- Do NOT output markdown, code fences, backticks, or explanatory text.\n"
-        "- If evidence for a field is absent, use the safe default shown.\n\n"
+        "- If evidence for a field is absent, use the safe default shown.\n"
+        "- CONCISENESS RULES: Require concise, recruiter-style language. Limit every textual explanation to 1-2 concise sentences (roughly 20-40 words max). Instead of long paragraphs, use brief phrases (e.g., 'Strong backend experience' instead of 'Candidate demonstrates extensive experience...').\n\n"
         "JOB DESCRIPTION\n"
         f"  Title:                {jd.title}\n"
         f"  Core Skills Required: {jd_skills_str}\n"
@@ -191,40 +192,38 @@ def _build_prompt(
         "OUTPUT SCHEMA (return this exact JSON, all keys required)\n"
         "{\n"
         '  "overall_match_pct": <integer 0-100, derived from Hireability Index and score signals>,\n'
-        '  "match_summary": "<2-3 sentences. Evidence-grounded. Reference specific skills and experience.>",\n'
+        '  "match_summary": "<Max 40 words. Concise recruiter-style summary. Evidence-grounded.>",\n'
         '  "hiring_recommendation": "<exactly one of: Strong Hire | Hire | Consider | Not Recommended>",\n'
-        '  "recommendation_reason": "<2-3 sentences explaining the recommendation with evidence>",\n'
-        '  "strengths": ["<matched skill or quality with brief evidence>"],\n'
+        '  "recommendation_reason": "<Max 40 words. Concise explanation of the recommendation with evidence>",\n'
+        '  "strengths": ["<Max 20 words. Matched skill or quality with brief evidence>"],\n'
         '  "skill_gaps": [\n'
         '    {"skill": "<name>", "severity": "<Critical|Important|Optional>", '
-        '"evidence": "<why it is missing or weak>"}\n'
+        '"evidence": "<Max 20 words. Why it is missing or weak>"}\n'
         "  ],\n"
         '  "experience_analysis": {\n'
         '    "verdict": "<exactly one of: Below Expectation | Meets Expectation | Exceeds Expectation>",\n'
-        '    "reasoning": "<1-2 sentences comparing candidate YOE vs JD range>"\n'
+        '    "reasoning": "<Max 40 words. Compare candidate YOE vs JD range>"\n'
         "  },\n"
         '  "education_analysis": {\n'
         '    "verdict": "<exactly one of: Aligned | Partially Aligned | Not Aligned | Not Specified>",\n'
-        '    "reasoning": "<1-2 sentences about education relevance to the role>"\n'
+        '    "reasoning": "<Max 40 words. Education relevance to the role>"\n'
         "  },\n"
         '  "hiring_confidence": {\n'
         '    "level": "<exactly one of: High | Medium | Low>",\n'
-        '    "reasoning": "<1-2 sentences explaining how complete and consistent '
-        'the resume evidence is. High = rich, verifiable evidence. '
-        'Medium = some gaps in evidence. Low = sparse or inconsistent data.>"\n'
+        '    "reasoning": "<Max 40 words. Explain completeness and consistency of resume evidence.>"\n'
         "  },\n"
         '  "technical_questions": [\n'
-        '    "<specific technical interview question based on this candidate and JD>",\n'
-        '    "<specific technical interview question>",\n'
-        '    "<specific technical interview question>"\n'
+        '    "<Max 40 words. Specific technical interview question based on this candidate and JD>",\n'
+        '    "<Max 40 words. Specific technical interview question>",\n'
+        '    "<Max 40 words. Specific technical interview question>"\n'
         "  ],\n"
         '  "behavioral_questions": [\n'
-        '    "<specific behavioural interview question based on this candidate and JD>",\n'
-        '    "<specific behavioural interview question>"\n'
+        '    "<Max 40 words. Specific behavioural interview question based on this candidate and JD>",\n'
+        '    "<Max 40 words. Specific behavioural interview question>"\n'
         "  ],\n"
         '  "skill_evidence": [\n'
         '    {"skill": "<name>", "matched": <true|false>, '
-        '"evidence": "<what resume says about this skill>"}\n'
+        '"evidence": "<Max 20 words. What resume says about this skill>"}\n'
         "  ]\n"
         "}\n\n"
         "FIELD RULES\n"
@@ -386,6 +385,56 @@ class CandidateIntelligenceAgent:
         )
         prompt   = _build_prompt(jd, candidate, score_components)
         response = model.generate_content(prompt)
+        
+        # --- TEMPORARY DEBUGGING ---
+        print("\n" + "="*60)
+        print("DEBUG: GEMINI API RESPONSE")
+        print("="*60)
+        print(f"1. Model name: {self._model_name}")
+        print(f"2. Response object type: {type(response)}")
+        
+        try:
+            has_text = hasattr(response, "text") and getattr(response, "text", None) is not None
+        except Exception:
+            has_text = False
+            
+        print(f"3. Whether response.text exists: {has_text}")
+        
+        if has_text:
+            try:
+                text_val = response.text
+                print(f"4. Length of response.text: {len(text_val)}")
+                print("5. Full response.text (not truncated):")
+                print("RAW RESPONSE:")
+                print(repr(text_val))
+                print("-" * 60)
+                print(f"8. Whether the response is empty: {len(text_val.strip()) == 0}")
+                print(f"9. Whether the response contains ```json fences: {'```json' in text_val}")
+            except Exception as e:
+                print(f"Error accessing response.text: {e}")
+        else:
+            print("4. Length of response.text: N/A")
+            print("5. Full response.text: N/A")
+            print("8. Whether the response is empty: N/A")
+            print("9. Whether the response contains ```json fences: N/A")
+            
+        print("6. Candidate count: 1")
+        
+        print("7. Prompt feedback / finish reason / safety information:")
+        try:
+            candidates_list = getattr(response, "candidates", [])
+            print(f"   Number of parts/candidates returned: {len(candidates_list)}")
+            if candidates_list:
+                c_obj = candidates_list[0]
+                print(f"   Finish Reason: {getattr(c_obj, 'finish_reason', 'N/A')}")
+                print(f"   Safety Ratings: {getattr(c_obj, 'safety_ratings', 'N/A')}")
+            print(f"   Prompt Feedback: {getattr(response, 'prompt_feedback', 'N/A')}")
+        except Exception as exc:
+            print(f"   Error reading metadata: {exc}")
+            
+        print("="*60 + "\n")
+        # ---------------------------
+        
         return response.text
 
     # ------------------------------------------------------------------
@@ -406,6 +455,11 @@ class CandidateIntelligenceAgent:
         """
         # Layer 1
         data = json.loads(raw)
+        
+        # Unwrap single-element list if Gemini hallucinated an array wrapper
+        if isinstance(data, list) and len(data) == 1 and isinstance(data[0], dict):
+            data = data[0]
+            
         if not isinstance(data, dict):
             raise ValueError(
                 f"Gemini returned {type(data).__name__}, expected a JSON object."
@@ -553,12 +607,13 @@ def _strip_markdown_fences(text: str) -> str:
     
     decoder = json.JSONDecoder()
     for i, char in enumerate(text):
-        if char in ('{', '['):
+        if char == '{':
             try:
                 # raw_decode parses a valid JSON document starting at index i
                 # and returns the parsed object + the end index.
                 obj, end_idx = decoder.raw_decode(text[i:])
-                return text[i:i+end_idx]
+                if isinstance(obj, dict):
+                    return text[i:i+end_idx]
             except json.JSONDecodeError:
                 # If decoding fails, this brace was just part of the text. Keep scanning.
                 continue
