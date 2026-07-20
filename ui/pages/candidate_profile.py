@@ -6,6 +6,7 @@ Full profile card, career timeline, skill list, education, and all signals.
 import streamlit as st
 
 from agents.matching_agent import CandidateIntelligenceAgent
+from agents.interview_agent import InterviewIntelligenceAgent
 from ui.voice_card import render_voice_card
 from core.reasoning import generate_ai_insights, generate_reasoning
 from core.skill_gap import analyze_skill_gap
@@ -391,10 +392,15 @@ def _render_ai_insights_tab(
         return
 
     payload = result["payload"]
-    _render_ai_insights_panel(payload, candidate)
+    _render_ai_insights_panel(payload, candidate, score_components, state)
 
 
-def _render_ai_insights_panel(payload: dict, candidate: dict) -> None:
+def _render_ai_insights_panel(
+    payload: dict, 
+    candidate: dict,
+    score_components: dict,
+    state: dict
+) -> None:
     """Render the full 9-section AI Insights panel."""
 
     rec  = payload.get("hiring_recommendation", "Consider")
@@ -632,6 +638,26 @@ def _render_ai_insights_panel(payload: dict, candidate: dict) -> None:
                     f'</div></div>',
                     unsafe_allow_html=True,
                 )
+
+    st.markdown("<br>", unsafe_allow_html=True)
+    
+    # ── Section 10: Generate Interview Kit ───────────────────────────────────
+    if st.button("Generate Interview Kit", type="primary"):
+        config = state.get("app_config", {})
+        active_project = state.get("active_project")
+        
+        if active_project:
+            jd = active_project.job_description
+            agent = InterviewIntelligenceAgent(config)
+            
+            with st.spinner("Generating Interview Kit..."):
+                try:
+                    kit = agent.generate_interview_kit(jd, candidate, score_components)
+                    st.session_state["current_interview_kit"] = kit
+                    st.session_state["current_candidate"] = candidate
+                    st.success("Interview Kit generated successfully!")
+                except Exception as e:
+                    st.error(f"Failed to generate Interview Kit: {e}")
 
 
 # -- Helper Functions ----------------------------------------------------------
